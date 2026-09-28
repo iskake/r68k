@@ -10,6 +10,14 @@ impl StatusRegister {
             val: 0
         }
     }
+
+    fn hi(&self) -> u8 {
+        ((self.val & 0xff00) >> 8) as u8
+    }
+
+    fn ccr(&self) -> u8 {
+        (self.val & 0xff) as u8
+    }
 }
 
 struct Registers {
@@ -35,7 +43,7 @@ struct Registers {
 
     pc: u32,
 
-    status: StatusRegister,
+    sr: StatusRegister,
 }
 
 impl Registers {
@@ -63,7 +71,7 @@ impl Registers {
 
             pc: 0,
 
-            status: StatusRegister::new(),
+            sr: StatusRegister::new(),
         }
     }
 }
@@ -80,8 +88,8 @@ pub enum CPURevision {
 
 pub struct CPU {
     reg: Registers,
-    cpu_revision: CPURevision,
     cycles: usize,
+    revision: CPURevision,
 }
 
 impl CPU {
@@ -97,8 +105,8 @@ impl CPU {
 
         CPU {
             reg: Registers::new(),
-            cpu_revision: rev,
             cycles: 0,
+            revision: rev,
         }
     }
 
@@ -131,11 +139,21 @@ impl CPU {
             self.reg.usp,
             self.reg.ssp,
         );
-        println!("  status: {:016b}", self.reg.status.val);
+        println!("  sr hi: {:08b} ccr: {:08b}", self.reg.sr.hi(), self.reg.sr.ccr());
         println!("  pc: {:08x}", self.reg.pc);
+    }
+
+    fn fetch_and_run(&mut self) {
+
     }
 
     pub fn run(&mut self) {
         self.print_state();
+    }
+
+    pub fn dbg_run_op(&mut self, op: u16) {
+        let inst = inst::get_instr(op);
+
+        println!("Got instruction: {inst:?}")
     }
 }
