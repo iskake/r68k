@@ -156,6 +156,7 @@ pub enum Instruction {
     Undefined(u16),
 }
 
+
 pub(crate) fn decode(op: u16) -> Instruction {
     use Instruction::*;
 
@@ -333,13 +334,22 @@ pub(crate) fn decode(op: u16) -> Instruction {
         0b1110 => {
             let d = m_hi & 0b100 != 0;
 
-            //? Should the handling of `s == 0b11` and `s != 0b11` be different?
-            match xn_hi {
-                0b00 => ASd  { rot: xn_hi, d, s, m, xn },
-                0b01 => LSd  { rot: xn_hi, d, s, m, xn },
-                0b10 => ROXd { rot: xn_hi, d, s, m, xn },
-                0b11 => ROd  { rot: xn_hi, d, s, m, xn },
-                _ => unreachable!()
+            if s == 0b11 {
+                match xn_hi {
+                    0b00 => ASd  { rot: xn_hi, d, s, m, xn },
+                    0b01 => LSd  { rot: xn_hi, d, s, m, xn },
+                    0b10 => ROXd { rot: xn_hi, d, s, m, xn },
+                    0b11 => ROd  { rot: xn_hi, d, s, m, xn },
+                    _ => unreachable!()
+                }
+            } else {
+                match m & 0b11 {
+                    0b00 => ASd  { rot: xn_hi, d, s, m, xn },
+                    0b01 => LSd  { rot: xn_hi, d, s, m, xn },
+                    0b10 => ROXd { rot: xn_hi, d, s, m, xn },
+                    0b11 => ROd  { rot: xn_hi, d, s, m, xn },
+                    _ => unreachable!()
+                }
             }
         },
         _ => Undefined(op)
