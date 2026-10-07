@@ -152,7 +152,7 @@ impl CPU {
     }
 
     pub fn dbg_run_op(&mut self, op: u16) {
-        let inst = inst::get_instr(op);
+        let inst = inst::decode(op);
 
         println!("Got instruction: {inst:?}")
     }
