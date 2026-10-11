@@ -1,3 +1,5 @@
+use crate::{cpu::inst::AddressingMode, mmu::MMU};
+
 mod inst;
 
 struct StatusRegister {
@@ -17,6 +19,66 @@ impl StatusRegister {
 
     fn ccr(&self) -> u8 {
         (self.val & 0xff) as u8
+    }
+
+    fn modify_x(&mut self, cond: bool) {
+        if cond { self.set_x() } else { self.clear_x() }
+    }
+
+    fn modify_n(&mut self, cond: bool) {
+        if cond { self.set_n() } else { self.clear_n() }
+    }
+
+    fn modify_z(&mut self, cond: bool) {
+        if cond { self.set_z() } else { self.clear_z() }
+    }
+
+    fn modify_v(&mut self, cond: bool) {
+        if cond { self.set_v() } else { self.clear_v() }
+    }
+
+    fn modify_c(&mut self, cond: bool) {
+        if cond { self.set_c() } else { self.clear_c() }
+    }
+
+    fn set_x(&mut self) {
+        self.val |= 0b10000;
+    }
+
+    fn set_n(&mut self) {
+        self.val |= 0b01000;
+    }
+
+    fn set_z(&mut self) {
+        self.val |= 0b00100;
+    }
+
+    fn set_v(&mut self) {
+        self.val |= 0b00010;
+    }
+
+    fn set_c(&mut self) {
+        self.val |= 0b00001;
+    }
+
+    fn clear_x(&mut self) {
+        self.val &= 0b11111111111_01111;
+    }
+
+    fn clear_n(&mut self) {
+        self.val &= 0b11111111111_10111;
+    }
+
+    fn clear_z(&mut self) {
+        self.val &= 0b11111111111_11011;
+    }
+
+    fn clear_v(&mut self) {
+        self.val &= 0b11111111111_11101;
+    }
+
+    fn clear_c(&mut self) {
+        self.val &= 0b11111111111_11110;
     }
 }
 
@@ -88,6 +150,9 @@ pub enum CPURevision {
 
 pub struct CPU {
     reg: Registers,
+
+    mmu: MMU,
+
     cycles: usize,
     revision: CPURevision,
 }
@@ -105,6 +170,7 @@ impl CPU {
 
         CPU {
             reg: Registers::new(),
+            mmu: MMU::new(0x10000),
             cycles: 0,
             revision: rev,
         }
@@ -143,17 +209,29 @@ impl CPU {
         println!("  pc: {:08x}", self.reg.pc);
     }
 
-    fn fetch_and_run(&mut self) {
+    fn read_am(&mut self, size: u8, am: AddressingMode) -> u32 {
+        // Should read a byte/short/long (based on size) from the location specified by the addressing mode
+        todo!()
+    }
 
+    fn read_pc_inc_short(&mut self) -> u16 {
+        let val = self.mmu.read_short(self.reg.pc);
+        self.reg.pc += 2;
+        val
+    }
+
+    fn fetch_and_run(&mut self) {
+        let op = self.read_pc_inc_short();
+        let inst = inst::decode_opcode(op);
+        println!("Got instruction: {inst:?}");
+        inst.run(self);
     }
 
     pub fn run(&mut self) {
         self.print_state();
+        self.fetch_and_run();
     }
 
     pub fn dbg_run_op(&mut self, op: u16) {
-        let inst = inst::decode(op);
-
-        println!("Got instruction: {inst:?}")
     }
 }

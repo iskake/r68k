@@ -1,4 +1,21 @@
-enum AddressingMode {
+use crate::{bits::{is_negative, is_zero}, cpu::CPU};
+
+enum DataSize {
+    Byte,
+    Short,
+    Long,
+    Any,
+}
+
+enum DataType {
+    Immediate,
+    BitIndex,
+    Displacement,
+    DisplacementOptional,
+    RegisterListMask,
+}
+
+pub(crate) enum AddressingMode {
     /// Data register `Dn`
     DataReg(u8),
     /// Address register `An`
@@ -34,8 +51,11 @@ enum AddressingMode {
 }
 
 impl AddressingMode {
-    fn get(mode: u8, reg: u8) -> AddressingMode {
+    fn decode(mode: u8, reg: u8) -> AddressingMode {
         use AddressingMode::*;
+
+        assert_eq!(mode & 0b111, reg);
+        assert_eq!(reg  & 0b111, mode);
 
         match mode {
             0b000 => DataReg(reg),
@@ -58,6 +78,12 @@ impl AddressingMode {
             _ => unreachable!(),
         }
     }
+
+    fn decode_op(op: u16) -> AddressingMode {
+        let mode = (op & 0b111_000 >> 3) as u8;
+        let reg  = (op & 0b000_111) as u8;
+        AddressingMode::decode(mode, reg)
+    }
 }
 
 #[derive(Debug)]
@@ -67,104 +93,206 @@ enum VariationCCRSR {
     ToSR,
 }
 
+impl VariationCCRSR {
+    fn from_op(op: u16) -> VariationCCRSR {
+        match op & 0b11_111_111 {
+            0b00_111_100 => VariationCCRSR::ToCCR,
+            0b01_111_100 => VariationCCRSR::ToSR,
+            _ => VariationCCRSR::Normal,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Instruction {
     // 0000
-    ORI  { s: u8, m: u8, xn: u8, variation: VariationCCRSR },
-    ANDI { s: u8, m: u8, xn: u8, variation: VariationCCRSR },
-    SUBI { s: u8, m: u8, xn: u8 },
-    ADDI { s: u8, m: u8, xn: u8 },
-    EORI { s: u8, m: u8, xn: u8, variation: VariationCCRSR },
-    CMPI { s: u8, m: u8, xn: u8 },
-    BTST { dn: u8, b_variation: u8, m: u8, xn: u8 },
-    MOVEP { dn: u8, d: bool, s: bool, an: u8 },
-    // BTST, BCHG, BCLR, BSET, MOVEP (Dn)
+    ORI   { op: u16 },
+    ANDI  { op: u16 },
+    SUBI  { op: u16 },
+    ADDI  { op: u16 },
+    EORI  { op: u16 },
+    CMPI  { op: u16 },
+    BTST  { op: u16 }, // == BTST, BCHG, BCLR, BSET
+    MOVEP { op: u16 },
     // 00ss
-    MOVEA { s: u8, an: u8, m: u8, xn: u8 },
-    MOVE  { s: u8, xn_hi: u8, m_hi: u8, m_lo: u8, xn_lo: u8 },
+    MOVEA { op: u16 },
+    MOVE  { op: u16 },
     // 0100
-    MOVEToFrom { m: u8, xn: u8, variation: VariationCCRSR },
-    NEGX { s: u8, m: u8, xn: u8 },
-    CLR  { s: u8, m: u8, xn: u8 },
-    NEG  { s: u8, m: u8, xn: u8 },
-    NOT  { s: u8, m: u8, xn: u8 },
-    EXT  { s: bool, dn: u8 },
-    NBCD { m: u8, xn: u8 },
-    SWAP { dn: u8 },
-    PEA  { m: u8, xn: u8 },
+    MOVEToFrom { op: u16 },
+    NEGX { op: u16 },
+    CLR  { op: u16 },
+    NEG  { op: u16 },
+    NOT  { op: u16 },
+    EXT  { op: u16 },
+    NBCD { op: u16 },
+    SWAP { op: u16 },
+    PEA  { op: u16 },
     ILLEGAL,
-    TAS  { m: u8, xn: u8 },
-    TST  { s: u8, m: u8, xn: u8},
-    TRAP { vector: u8 },
-    LINK { an: u8 },
-    UNLK { an: u8 },
-    MOVEUSP { d: bool, an: u8 },
+    TAS  { op: u16 },
+    TST  { op: u16 },
+    TRAP { op: u16 },
+    LINK { op: u16 },
+    UNLK { op: u16 },
+    MOVEUSP { op: u16 },
     RESET, NOP, STOP,
     RTE, RTS, TRAPV, RTR,
-    JSR { m: u8, xn: u8 },
-    JMP { m: u8, xn: u8 },
-    MOVEM { d: bool, s: bool, m: u8, xn: u8 },
-    LEA { an: u8, m: u8, xn: u8 },
-    CHK { dn: u8, s: u8, m: u8, xn: u8 },
+    JSR   { op: u16 },
+    JMP   { op: u16 },
+    MOVEM { op: u16 },
+    LEA   { op: u16 },
+    CHK   { op: u16 },
     // 0101
-    ADDQ { data: u8, s: u8, m: u8, xn: u8 },
-    SUBQ { data: u8, s: u8, m: u8, xn: u8 },
-    Scc  { condition: u8, m: u8, xn: u8 },
-    DBcc { condition: u8, dn: u8 },
+    ADDQ { op: u16 },
+    SUBQ { op: u16 },
+    Scc  { op: u16 },
+    DBcc { op: u16 },
     // 0110
-    BRA { displacement: u8 },
-    BSR { displacement: u8 },
-    Bcc { condition: u8, displacement: u8 },
+    BRA { op: u16 },
+    BSR { op: u16 },
+    Bcc { op: u16 },
     // 0111
-    MOVEQ { dn: u8, data: u8 },
+    MOVEQ { op: u16 },
     // 1000
-    DIVU { dn: u8, m: u8, xn: u8 },
-    DIVS { dn: u8, m: u8, xn: u8 },
-    SBCD { xn_hi: u8, m: bool, xn_lo: u8 },
-    OR   { dn: u8, d: bool, s: u8, m: u8, xn: u8 },
+    DIVU { op: u16 },
+    DIVS { op: u16 },
+    SBCD { op: u16 },
+    OR   { op: u16 },
     // 1001
-    SUB  { dn: u8, d: bool, s: u8, m: u8, xn: u8 },
-    SUBX { xn_hi: u8, s: u8, m: bool, xn_lo: u8 },
-    SUBA { an: u8, s: bool, m: u8, xn: u8 },
+    SUB  { op: u16 },
+    SUBX { op: u16 },
+    SUBA { op: u16 },
     // 1010
     // ...
     // 1011
-    EOR  { dn: u8, s: u8, m: u8, xn: u8 },
-    CMPM { an_hi: u8, s: u8, an_lo: u8 },
-    CMP  { dn: u8, s: u8, m: u8, xn: u8 },
-    CMPA { an: u8, s: bool, m: u8, xn: u8 },
+    EOR  { op: u16 },
+    CMPM { op: u16 },
+    CMP  { op: u16 },
+    CMPA { op: u16 },
     // 1100
-    MULU { dn: u8, m: u8, xn: u8 },
-    MULS { dn: u8, m: u8, xn: u8 },
-    ABCD { xn_hi: u8, m: bool, xn_lo: u8 },
-    EXG  { xn_hi: u8, m: u8, xn: u8 },
-    AND  { dn: u8, d: bool, s: u8, m: u8, xn: u8 },
+    MULU { op: u16 },
+    MULS { op: u16 },
+    ABCD { op: u16 },
+    EXG  { op: u16 },
+    AND  { op: u16 },
     // 1101
-    ADD  { dn: u8, d: bool, s: u8, m: u8, xn: u8 },
-    ADDX { xn_hi: u8, s: u8, m: bool, xn_lo: u8 },
-    ADDA { an: u8, s: bool, m: u8, xn: u8 },
+    ADD  { op: u16 },
+    ADDX { op: u16 },
+    ADDA { op: u16 },
     // 1110
-    ASd  { rot: u8, d: bool, s: u8, m: u8, xn: u8 },
-    LSd  { rot: u8, d: bool, s: u8, m: u8, xn: u8 },
-    ROXd { rot: u8, d: bool, s: u8, m: u8, xn: u8 },
-    ROd  { rot: u8, d: bool, s: u8, m: u8, xn: u8 },
+    ASd  { op: u16 },
+    LSd  { op: u16 },
+    ROXd { op: u16 },
+    ROd  { op: u16 },
     // ASd, LSd, ROXd, ROd (rotation)
     // 1111
     // Floating point/supervisor instructions?
 
     // Extra
-    Undefined(u16),
+    Undefined { op: u16 },
 }
 
+impl Instruction {
+    pub(crate) fn run(self, cpu: &mut CPU) {
+        match self {
+            Instruction::ORI   { op } => todo!(),
+            Instruction::ANDI  { op } => todo!(),
+            Instruction::SUBI  { op } => todo!(),
+            Instruction::ADDI  { op } => todo!(),
+            Instruction::EORI  { op } => todo!(),
+            Instruction::CMPI  { op } => todo!(),
+            Instruction::BTST  { op } => todo!(),
+            Instruction::MOVEP { op } => todo!(),
+            Instruction::MOVEA { op } => todo!(),
+            Instruction::MOVE  { op } => todo!(),
+            Instruction::MOVEToFrom { op } => todo!(),
+            Instruction::NEGX  { op } => todo!(),
+            Instruction::CLR   { op } => todo!(),
+            Instruction::NEG   { op } => todo!(),
+            Instruction::NOT   { op } => not(op, cpu),
+            Instruction::EXT   { op } => todo!(),
+            Instruction::NBCD  { op } => todo!(),
+            Instruction::SWAP  { op } => todo!(),
+            Instruction::PEA   { op } => todo!(),
+            Instruction::ILLEGAL => todo!(),
+            Instruction::TAS   { op } => todo!(),
+            Instruction::TST   { op } => todo!(),
+            Instruction::TRAP  { op } => todo!(),
+            Instruction::LINK  { op } => todo!(),
+            Instruction::UNLK  { op } => todo!(),
+            Instruction::MOVEUSP { op } => todo!(),
+            Instruction::RESET => todo!(),
+            Instruction::NOP   => {},
+            Instruction::STOP  => todo!(),
+            Instruction::RTE   => todo!(),
+            Instruction::RTS   => todo!(),
+            Instruction::TRAPV => todo!(),
+            Instruction::RTR   => todo!(),
+            Instruction::JSR   { op } => todo!(),
+            Instruction::JMP   { op } => todo!(),
+            Instruction::MOVEM { op } => todo!(),
+            Instruction::LEA   { op } => todo!(),
+            Instruction::CHK   { op } => todo!(),
+            Instruction::ADDQ  { op } => todo!(),
+            Instruction::SUBQ  { op } => todo!(),
+            Instruction::Scc   { op } => todo!(),
+            Instruction::DBcc  { op } => todo!(),
+            Instruction::BRA   { op } => todo!(),
+            Instruction::BSR   { op } => todo!(),
+            Instruction::Bcc   { op } => todo!(),
+            Instruction::MOVEQ { op } => todo!(),
+            Instruction::DIVU  { op } => todo!(),
+            Instruction::DIVS  { op } => todo!(),
+            Instruction::SBCD  { op } => todo!(),
+            Instruction::OR    { op } => todo!(),
+            Instruction::SUB   { op } => todo!(),
+            Instruction::SUBX  { op } => todo!(),
+            Instruction::SUBA  { op } => todo!(),
+            Instruction::EOR   { op } => todo!(),
+            Instruction::CMPM  { op } => todo!(),
+            Instruction::CMP   { op } => todo!(),
+            Instruction::CMPA  { op } => todo!(),
+            Instruction::MULU  { op } => todo!(),
+            Instruction::MULS  { op } => todo!(),
+            Instruction::ABCD  { op } => todo!(),
+            Instruction::EXG   { op } => todo!(),
+            Instruction::AND   { op } => todo!(),
+            Instruction::ADD   { op } => todo!(),
+            Instruction::ADDX  { op } => todo!(),
+            Instruction::ADDA  { op } => todo!(),
+            Instruction::ASd   { op } => todo!(),
+            Instruction::LSd   { op } => todo!(),
+            Instruction::ROXd  { op } => todo!(),
+            Instruction::ROd   { op } => todo!(),
+            Instruction::Undefined { op } => panic!("Undefined opcode {op:016x}"),
+        }
+    }
+}
 
-pub(crate) fn decode(op: u16) -> Instruction {
+fn not(op: u16, cpu: &mut CPU) {
+    let s = get_op_size(op);
+    let am = AddressingMode::decode_op(op);
+
+    let res = !cpu.read_am(s, am);
+
+    cpu.reg.sr.modify_n(is_negative(res, s));
+    cpu.reg.sr.modify_z(is_zero(res, s));
+    cpu.reg.sr.clear_v();
+    cpu.reg.sr.clear_c();
+}
+
+fn get_op_size(op: u16) -> u8 {
+    ((op & 0b11_000_000) >> 6) as u8
+}
+
+pub(crate) fn decode_opcode(op: u16) -> Instruction {
     use Instruction::*;
 
     let op_hi_nibble = (op & 0xf000) >> 12;
-    let op_lo_byte = (op & 0xff) as u8;
 
     let m = ((op & 0b111000) >> 3) as u8;
     let m_hi = ((op & 0x1c0) >> 6) as u8;
+
+    let d = m_hi & 0b100 != 0;
 
     let s = m_hi & 0b11;
 
@@ -173,70 +301,62 @@ pub(crate) fn decode(op: u16) -> Instruction {
 
     match op_hi_nibble {
         0b0000 => {
-            let op_hi_bit0 = (op & 0x0100) != 0x0100;
+            let op_hi_byte_bit0_set = (op & 0x0100) != 0;
 
-            if op_hi_bit0 {
+            if !op_hi_byte_bit0_set {
+                let inst_type = xn_hi;
+
+                match inst_type {
+                    0b000 => ORI  { op },
+                    0b001 => ANDI { op },
+                    0b010 => SUBI { op },
+                    0b011 => ADDI { op },
+                    0b101 => EORI { op },
+                    0b110 => CMPI { op },
+                    0b100 => BTST { op },
+                    _ => Undefined { op },
+                }
+            } else {
                 // b[tst|chg|clr|set], movep
-                let data_reg = xn_hi;
-
                 if m == 0b001 {
                     // movep
 
                     // Direction:
                     // - true == register to memory
                     // - false == memory to regsiter
-                    let direction = (s & 0b10) != 0;
-                    let size = (s & 0b01) != 0;
-
-                    MOVEP { dn: data_reg, d: direction, s: size, an: xn }
+                    MOVEP { op }
                 } else {
-                    // btst, b
-                    BTST { dn: xn_hi, b_variation: s, m, xn }
+                    // btst, bchg, bclr, bset
+                    BTST { op }
                 }
-            } else {
-                let inst_type = xn_hi;
 
-                match inst_type {
-                    0b000 => ORI  { s, m, xn, variation: VariationCCRSR::Normal},
-                    0b001 => ANDI { s, m, xn, variation: VariationCCRSR::Normal},
-                    0b010 => SUBI { s, m, xn},
-                    0b011 => ADDI { s, m, xn},
-                    0b100 => BTST { dn: 0b100, b_variation: s, m, xn},
-                    0b101 => EORI { s, m, xn, variation: VariationCCRSR::Normal},
-                    0b110 => CMPI { s, m, xn},
-                    _ => Undefined(op),
-                }
             }
         },
         0b0001 | 0b0010 | 0b0011 => {
             // move, movea
-            let s = ((op & 0x3000) >> 12) as u8;
-
             if m_hi == 0b001 {
                 // movea
-                MOVEA { s, an: xn_hi, m, xn }
+                MOVEA { op }
             } else {
                 // move
-                MOVE { s, xn_hi, m_hi, m_lo: m, xn_lo: xn }
+                MOVE { op }
             }
         }
         0b0100 => {
-            decode_0100_prefixed(op, m, m_hi, s, xn, xn_hi)
+            decode_opcode_0100_prefixed(op, m, m_hi, s, xn, xn_hi)
         },
         0b0101 => {
             if s != 0b11 {
                 if m_hi & 0b100 == 0 {
-                    ADDQ { data: xn_hi, s, m, xn }
+                    ADDQ { op }
                 } else {
-                    SUBQ { data: xn_hi, s, m, xn }
+                    SUBQ { op }
                 }
             } else {
-                let condition = ((op & 0x0f00) >> 8) as u8;
-
                 if m != 0b001 {
-                    Scc { condition, m, xn }
+                    Scc { op }
                 } else {
-                    DBcc { condition, dn: xn }
+                    DBcc { op }
                 }
             }
         },
@@ -244,131 +364,109 @@ pub(crate) fn decode(op: u16) -> Instruction {
             let condition = ((op & 0x0f00) >> 8) as u8;
 
             match condition {
-                0 => BRA { displacement: op_lo_byte },
-                1 => BSR { displacement: op_lo_byte },
-                _ => Bcc { condition, displacement: op_lo_byte },
+                0 => BRA { op },
+                1 => BSR { op },
+                _ => Bcc { op },
             }
         },
         0b0111 => {
             if m_hi & 0b100 != 0 {
-                MOVEQ { dn: xn_hi, data: op_lo_byte }
+                MOVEQ { op }
             } else {
                 // ?
-                Undefined(op)
+                Undefined { op }
             }
         },
         0b1000 => {
             if (op & 0x1f0) >> 4 == 0b10000 {
-                let m = m & 0b001 == 1;
-                SBCD { xn_hi, m, xn_lo: xn }
+                SBCD { op }
             } else {
                 match m_hi {
-                    0b011 => DIVU { dn: xn_hi, m, xn },
-                    0b111 => DIVS { dn: xn_hi, m, xn },
+                    0b011 => DIVU { op },
+                    0b111 => DIVS { op },
                     _ => {
-                        let direction = m_hi & 0b100 != 0;
-                        OR { dn: xn_hi, d: direction, s, m, xn }
+                        OR { op }
                     }
                 }
             }
         },
         0b1001 => {
-            let d = m_hi & 0b100 != 0;
-
             if d && m & 0b110 == 0b000 {
-                let m = m & 0b001 == 1;
-                SUBX { xn_hi, s, m, xn_lo: xn}
+                SUBX { op }
             } else if s == 0b11 {
-                let s = m_hi & 0b100 != 0;
-                SUBA { an: xn_hi, s, m, xn }
+                SUBA { op }
             } else {
-                SUB { dn: xn_hi, d, s, m, xn }
+                SUB { op }
             }
         },
         0b1011 => {
-            let d = m_hi & 0b100 != 0;
-
             if d && m == 0b001 {
-                CMPM { an_hi: xn_hi, s, an_lo: xn }
+                CMPM { op }
             } else if s == 0b11 {
-                let s = m_hi & 0b100 != 0;
-                CMPA { an: xn_hi, s, m, xn }
+                CMPA { op }
             } else if !d {
-                CMP { dn: xn_hi, s, m, xn }
+                CMP { op }
             } else {
-                EOR { dn: xn_hi, s, m, xn }
+                EOR { op }
             }
         },
         0b1100 => {
-            let d = m_hi & 0b100 != 0;
-
             if (op & 0x1f0) >> 4 == 0b10000 {
-                let m = m & 0b001 == 1;
-
-                ABCD { xn_hi, m, xn_lo: xn }
+                ABCD { op }
             } else if !d && s == 0b11 {
-                MULU { dn: xn_hi, m, xn }
+                MULU { op }
             } else if d && s == 0b11 {
-                MULS { dn: xn_hi, m, xn }
+                MULS { op }
             } else if d && m & 0b110 == 0b000 {
-                let m = ((op_lo_byte & 0b1111_1000) >> 3) as u8;
-
-                EXG { xn_hi, m, xn }
+                EXG { op }
             } else {
-                AND { dn: xn_hi, d, s, m, xn }
+                AND { op }
             }
         },
         0b1101 => {
-            let d = m_hi & 0b100 != 0;
-
             if d && m & 0b110 == 0b000 {
-                let m = m & 0b001 == 1;
-                ADDX { xn_hi, s, m, xn_lo: xn}
+                ADDX { op }
             } else if s == 0b11 {
-                let s = m_hi & 0b100 != 0;
-                ADDA { an: xn_hi, s, m, xn }
+                ADDA { op }
             } else {
-                ADD { dn: xn_hi, d, s, m, xn }
+                ADD { op }
             }
         },
         0b1110 => {
-            let d = m_hi & 0b100 != 0;
-
             if s == 0b11 {
                 match xn_hi {
-                    0b00 => ASd  { rot: xn_hi, d, s, m, xn },
-                    0b01 => LSd  { rot: xn_hi, d, s, m, xn },
-                    0b10 => ROXd { rot: xn_hi, d, s, m, xn },
-                    0b11 => ROd  { rot: xn_hi, d, s, m, xn },
+                    0b00 => ASd  { op },
+                    0b01 => LSd  { op },
+                    0b10 => ROXd { op },
+                    0b11 => ROd  { op },
                     _ => unreachable!()
                 }
             } else {
                 match m & 0b11 {
-                    0b00 => ASd  { rot: xn_hi, d, s, m, xn },
-                    0b01 => LSd  { rot: xn_hi, d, s, m, xn },
-                    0b10 => ROXd { rot: xn_hi, d, s, m, xn },
-                    0b11 => ROd  { rot: xn_hi, d, s, m, xn },
+                    0b00 => ASd  { op },
+                    0b01 => LSd  { op },
+                    0b10 => ROXd { op },
+                    0b11 => ROd  { op },
                     _ => unreachable!()
                 }
             }
         },
-        _ => Undefined(op)
+        _ => Undefined { op }
     }
 }
 
 #[inline(always)]
-fn decode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u8) -> Instruction {
+fn decode_opcode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u8) -> Instruction {
     use Instruction::*;
 
     if m_hi & 0b110 == 0b110 {
         // lea, chk
         if m_hi & 0b001 == 1 {
-            return LEA { an: xn_hi, m, xn }
+            return LEA { op }
         } else {
             // NOTE: s is always 0b11 (.w) on mc68000
             // TODO: other chk sizes (mc680x0 where x=20,30,40)
-            let s = (m_hi & 0b110) >> 1;
-            return CHK { dn: xn_hi, s, m, xn }
+            return CHK { op }
         }
     }
 
@@ -381,20 +479,20 @@ fn decode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u8) -> I
             // move [from|to] [sr|ccr]
 
             match nibble {
-                0b000 => MOVEToFrom { m, xn, variation: VariationCCRSR::Normal },
-                0b100 => MOVEToFrom { m, xn, variation: VariationCCRSR::ToCCR },
-                0b110 => MOVEToFrom { m, xn, variation: VariationCCRSR::ToSR },
-                _ => Undefined(op)
+                0b000 => MOVEToFrom { op },
+                0b100 => MOVEToFrom { op },
+                0b110 => MOVEToFrom { op },
+                _ => Undefined { op }
             }
         } else {
             // negx, clr, neg, not
 
             match nibble {
-                0b000 => NEGX { s, m, xn },
-                0b010 => CLR  { s, m, xn },
-                0b100 => NEG  { s, m, xn },
-                0b110 => NOT  { s, m, xn },
-                _ => Undefined(op)
+                0b000 => NEGX { op },
+                0b010 => CLR  { op },
+                0b100 => NEG  { op },
+                0b110 => NOT  { op },
+                _ => Undefined { op }
             }
         }
     } else {
@@ -402,23 +500,21 @@ fn decode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u8) -> I
             0b100 => {
                 // ext, nbcd, swap, pea, movem (d == 0)
                 if m_hi & 0b110 == 0b010 {
-                    let s = m_hi & 0b001 == 1;
-
                     if m == 0b000 {
-                        EXT { s, dn: xn }
+                        EXT { op }
                     } else {
-                        MOVEM { d: false, s, m, xn }
+                        MOVEM { op }
                     }
                 } else if m_hi == 0b000 {
-                    NBCD { m, xn }
+                    NBCD { op }
                 } else if m_hi == 0b001 {
                     if m != 0b000 {
-                        SWAP { dn: xn }
+                        SWAP { op }
                     } else {
-                        PEA { m, xn }
+                        PEA { op }
                     }
                 } else {
-                    Undefined(op)
+                    Undefined { op }
                 }
             },
             0b101 => {
@@ -427,10 +523,10 @@ fn decode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u8) -> I
                     if m == 0b111 && xn == 0b100 {
                         ILLEGAL
                     } else {
-                        TAS { m, xn }
+                        TAS { op }
                     }
                 } else {
-                    TST { s, m, xn }
+                    TST { op }
                 }
             },
             0b111 => {
@@ -444,11 +540,10 @@ fn decode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u8) -> I
                         // trap, link, unlk
                         match m & 0b11 {
                             0b00 | 0b01 => {
-                                let vector = (op & 0xf) as u8;
-                                TRAP { vector }
+                                TRAP { op }
                             },
-                            0b10 => LINK { an: xn },
-                            0b11 => UNLK { an: xn },
+                            0b10 => LINK { op },
+                            0b11 => UNLK { op },
                             _ => unreachable!(),
                         }
                     } else {
@@ -457,8 +552,7 @@ fn decode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u8) -> I
                             // Direction:
                             // - false == register to memory
                             // - true == memory to regsiter
-                            let direction = m & 0b001 == 1;
-                            MOVEUSP { d: direction, an: xn }
+                            MOVEUSP { op }
                         } else {
                             // reset, nop, stop, rte, rts, trapv, rtr
                             // All of the above instructions have only a single opcode.
@@ -467,7 +561,7 @@ fn decode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u8) -> I
                                 0b001 => NOP,
                                 0b010 => STOP,
                                 0b011 => RTE,
-                                0b100 => Undefined(op),
+                                0b100 => Undefined { op },
                                 0b101 => RTS,
                                 0b110 => TRAPV,
                                 0b111 => RTR,
@@ -479,18 +573,17 @@ fn decode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u8) -> I
                     // 0100111XXxxxxxxx
                     // jsr, jmp
                     if m_hi & 0b001 == 0 {
-                        JSR { m, xn }
+                        JSR { op }
                     } else {
-                        JMP { m, xn }
+                        JMP { op }
                     }
                 }
             },
             0b110 => {
                 // movem (d == 1)
-                let s = m_hi & 0b001 == 1;
-                MOVEM { d: true, s, m, xn }
+                MOVEM { op }
             }
-            _ => Undefined(op)
+            _ => Undefined { op }
         }
     }
 }

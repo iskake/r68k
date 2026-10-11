@@ -5,5 +5,4 @@ fn main() {
 
     println!("created cpu");
     cpu.run();
-    cpu.dbg_run_op(0b0010000000000000);
 }
