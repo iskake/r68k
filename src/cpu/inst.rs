@@ -1,11 +1,6 @@
-use crate::{bits::{is_negative, is_zero}, cpu::CPU};
+use std::fmt::Display;
 
-enum DataSize {
-    Byte,
-    Short,
-    Long,
-    Any,
-}
+use crate::{bits::{DataSize, is_negative, is_zero, sign_extend, sign_extend_byte}, cpu::{CPU, RegisterNum}};
 
 enum DataType {
     Immediate,
@@ -15,25 +10,26 @@ enum DataType {
     RegisterListMask,
 }
 
-pub(crate) enum AddressingMode {
+#[derive(Debug, Clone, Copy)]
+pub enum AddressingMode {
     /// Data register `Dn`
-    DataReg(u8),
+    DataReg(RegisterNum),
     /// Address register `An`
-    AddrReg(u8),
+    AddrReg(RegisterNum),
     /// Indirect address `(An)`
-    Addr(u8),
+    Addr(RegisterNum),
     /// Address with postincrement `(An)+`
-    AddrPostInc(u8),
+    AddrPostInc(RegisterNum),
     /// Address with predecrement `-(An)`
-    AddrPreDec(u8),
+    AddrPreDec(RegisterNum),
     /// Address with displacement `(d16, An)`
-    AddrDisplace(u8),
+    AddrDisplace(RegisterNum),
     /// Address with index `(d8, An, Xn)`
     /// - AddrRegIndIdx8 requires 1 extension word
     /// - AddrRegIndIdxBase requires 1,2, or 3 extension word(s)
     /// - MemIndPostIdx requires 1,2,3,4, or 5 extension word(s)
     /// - MemIndPreIdx requires 1,2,3,4, or 5 extension word(s)
-    AddrIdx(u8),
+    AddrIdx(RegisterNum),
     /// Program Counter with displacement `(d16, PC)`
     PCDisplace,
     /// Program Counter with index `(d8, PC, Xn)`
@@ -50,21 +46,43 @@ pub(crate) enum AddressingMode {
     Invalid,
 }
 
+impl Display for AddressingMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AddressingMode::DataReg(r)      => write!(f, "d{}", Into::<u8>::into(*r)),
+            AddressingMode::AddrReg(r)      => write!(f, "a{}", Into::<u8>::into(*r)),
+            AddressingMode::Addr(r)         => write!(f, "(a{})", Into::<u8>::into(*r)),
+            AddressingMode::AddrPostInc(r)  => write!(f, "(a{})+", Into::<u8>::into(*r)),
+            AddressingMode::AddrPreDec(r)   => write!(f, "-(a{})", Into::<u8>::into(*r)),
+            AddressingMode::AddrDisplace(r) => write!(f, "d(a{})", Into::<u8>::into(*r)),
+            AddressingMode::AddrIdx(r)      => write!(f, "d(a{},Xn)", Into::<u8>::into(*r)),
+            AddressingMode::PCDisplace                    => write!(f, "d(pc)"),
+            AddressingMode::PCIdx                         => write!(f, "d(pc,Xn)"),
+            AddressingMode::AbsShort                      => write!(f, "(xxx).w"),
+            AddressingMode::AbsLong                       => write!(f, "(xxx).l"),
+            AddressingMode::Imm                           => write!(f, "#imm"),
+            AddressingMode::Invalid                       => write!(f, "(invalid addressing mode)"),
+        }
+    }
+}
+
 impl AddressingMode {
     fn decode(mode: u8, reg: u8) -> AddressingMode {
         use AddressingMode::*;
 
-        assert_eq!(mode & 0b111, reg);
-        assert_eq!(reg  & 0b111, mode);
+        assert_eq!(mode & 0b111, mode);
+        assert_eq!(reg  & 0b111, reg);
+
+        let reg_n: RegisterNum = reg.into();
 
         match mode {
-            0b000 => DataReg(reg),
-            0b001 => AddrReg(reg),
-            0b010 => Addr(reg),
-            0b011 => AddrPostInc(reg),
-            0b100 => AddrPreDec(reg),
-            0b101 => AddrDisplace(reg),
-            0b110 => AddrIdx(reg),
+            0b000 => DataReg(reg_n),
+            0b001 => AddrReg(reg_n),
+            0b010 => Addr(reg_n),
+            0b011 => AddrPostInc(reg_n),
+            0b100 => AddrPreDec(reg_n),
+            0b101 => AddrDisplace(reg_n),
+            0b110 => AddrIdx(reg_n),
             0b111 => {
                 match reg {
                     0b000 => AbsShort,
@@ -80,8 +98,8 @@ impl AddressingMode {
     }
 
     fn decode_op(op: u16) -> AddressingMode {
-        let mode = (op & 0b111_000 >> 3) as u8;
-        let reg  = (op & 0b000_111) as u8;
+        let mode = get_op_m_lo(op);
+        let reg  = get_op_xn_lo(op);
         AddressingMode::decode(mode, reg)
     }
 }
@@ -191,6 +209,111 @@ pub enum Instruction {
     Undefined { op: u16 },
 }
 
+impl Display for Instruction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Instruction::*;
+        match self {
+            ORI   { op } => write!(f, "ori{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
+            ANDI  { op } => todo!(),
+            SUBI  { op } => todo!(),
+            ADDI  { op } => todo!(),
+            EORI  { op } => todo!(),
+            CMPI  { op } => todo!(),
+            BTST  { op } => todo!(),
+            MOVEP { op } => {
+                let s = get_op_size_bit9(*op);
+                let an = get_op_xn_lo(*op);
+                let dn = get_op_xn_hi(*op);
+                if get_op_m_hi(*op) & 0b010 != 0 {
+                    write!(f, "movep{} d{},(d,a{})", s, dn, an)
+                } else {
+                    write!(f, "movep{} (d,a{}),d{}", s, an, dn)
+                }
+            },
+            MOVEA { op } => {
+                let s = get_op_size_move(*op);
+
+                let am_src = AddressingMode::decode_op(*op);
+
+                let xn = get_op_xn_hi(*op);
+
+                write!(f, "movea{} a{},{}", s, xn, am_src)
+            },
+            MOVE  { op } => {
+                let s = get_op_size_move(*op);
+
+                let am_src = AddressingMode::decode_op(*op);
+
+                let m = get_op_m_hi(*op);
+                let xn = get_op_xn_hi(*op);
+                let am_dst = AddressingMode::decode(m, xn);
+
+                write!(f, "move{} {},{}", s, am_src, am_dst)
+            },
+            MOVEToFrom { op } => todo!(),
+            NEGX  { op } => todo!(),
+            CLR   { op } => todo!(),
+            NEG   { op } => todo!(),
+            NOT   { op } => write!(f, "not{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
+            EXT   { op } => todo!(),
+            NBCD  { op } => todo!(),
+            SWAP  { op } => todo!(),
+            PEA   { op } => todo!(),
+            ILLEGAL            => write!(f, "illegal"),
+            TAS   { op } => todo!(),
+            TST   { op } => todo!(),
+            TRAP  { op } => todo!(),
+            LINK  { op } => todo!(),
+            UNLK  { op } => todo!(),
+            MOVEUSP {op} => todo!(),
+            RESET              => write!(f, "reset"),
+            NOP                => write!(f, "nop"),
+            STOP               => write!(f, "stop"),
+            RTE                => write!(f, "rte"),
+            RTS                => write!(f, "rts"),
+            TRAPV              => write!(f, "trapv"),
+            RTR                => write!(f, "rtr"),
+            JSR   { op } => todo!(),
+            JMP   { op } => todo!(),
+            MOVEM { op } => todo!(),
+            LEA   { op } => todo!(),
+            CHK   { op } => todo!(),
+            ADDQ  { op } => todo!(),
+            SUBQ  { op } => todo!(),
+            Scc   { op } => todo!(),
+            DBcc  { op } => todo!(),
+            BRA   { op } => todo!(),
+            BSR   { op } => todo!(),
+            Bcc   { op } => todo!(),
+            MOVEQ { op } => write!(f, "moveq #${:02x}", op & 0xff),
+            DIVU  { op } => todo!(),
+            DIVS  { op } => todo!(),
+            SBCD  { op } => todo!(),
+            OR    { op } => todo!(),
+            SUB   { op } => todo!(),
+            SUBX  { op } => todo!(),
+            SUBA  { op } => todo!(),
+            EOR   { op } => todo!(),
+            CMPM  { op } => todo!(),
+            CMP   { op } => todo!(),
+            CMPA  { op } => todo!(),
+            MULU  { op } => todo!(),
+            MULS  { op } => todo!(),
+            ABCD  { op } => todo!(),
+            EXG   { op } => todo!(),
+            AND   { op } => todo!(),
+            ADD   { op } => todo!(),
+            ADDX  { op } => todo!(),
+            ADDA  { op } => todo!(),
+            ASd   { op } => todo!(),
+            LSd   { op } => todo!(),
+            ROXd  { op } => todo!(),
+            ROd   { op } => todo!(),
+            Undefined { op } => write!(f, "undefined ${op:04x}"),
+        }
+    }
+}
+
 impl Instruction {
     pub(crate) fn run(self, cpu: &mut CPU) {
         match self {
@@ -201,9 +324,9 @@ impl Instruction {
             Instruction::EORI  { op } => todo!(),
             Instruction::CMPI  { op } => todo!(),
             Instruction::BTST  { op } => todo!(),
-            Instruction::MOVEP { op } => todo!(),
-            Instruction::MOVEA { op } => todo!(),
-            Instruction::MOVE  { op } => todo!(),
+            Instruction::MOVEP { op } => movep(op, cpu),
+            Instruction::MOVEA { op } => move_(op, cpu),
+            Instruction::MOVE  { op } => move_(op, cpu),
             Instruction::MOVEToFrom { op } => todo!(),
             Instruction::NEGX  { op } => todo!(),
             Instruction::CLR   { op } => todo!(),
@@ -221,7 +344,7 @@ impl Instruction {
             Instruction::UNLK  { op } => todo!(),
             Instruction::MOVEUSP { op } => todo!(),
             Instruction::RESET => todo!(),
-            Instruction::NOP   => {},
+            Instruction::NOP   => {},   // TODO: "does not begin execution until all pending bus cycles have completed."
             Instruction::STOP  => todo!(),
             Instruction::RTE   => todo!(),
             Instruction::RTS   => todo!(),
@@ -239,7 +362,7 @@ impl Instruction {
             Instruction::BRA   { op } => todo!(),
             Instruction::BSR   { op } => todo!(),
             Instruction::Bcc   { op } => todo!(),
-            Instruction::MOVEQ { op } => todo!(),
+            Instruction::MOVEQ { op } => moveq(op, cpu),
             Instruction::DIVU  { op } => todo!(),
             Instruction::DIVS  { op } => todo!(),
             Instruction::SBCD  { op } => todo!(),
@@ -263,7 +386,86 @@ impl Instruction {
             Instruction::LSd   { op } => todo!(),
             Instruction::ROXd  { op } => todo!(),
             Instruction::ROd   { op } => todo!(),
-            Instruction::Undefined { op } => panic!("Undefined opcode {op:016x}"),
+            Instruction::Undefined { op } => panic!("Undefined opcode {op:016b}"),
+        }
+    }
+}
+
+fn move_(op: u16, cpu: &mut CPU) {
+    let s = get_op_size_move(op);
+    let am_src = AddressingMode::decode_op(op);
+
+    let xn_hi = get_op_xn_hi(op);
+    let m_hi = get_op_m_hi(op);
+    let am_dst = AddressingMode::decode(m_hi, xn_hi);
+
+    let src_val = cpu.read_am(s, am_src);
+    cpu.write_am(s, am_dst, src_val);
+
+    cpu.reg.sr.modify_n(is_negative(src_val, s));
+    cpu.reg.sr.modify_z(is_zero(src_val, s));
+    cpu.reg.sr.clear_v();
+    cpu.reg.sr.clear_c();
+}
+
+fn moveq(op: u16, cpu: &mut CPU) {
+    let dn = get_op_xn_hi(op).into();
+    let val = sign_extend_byte(0xff);
+    cpu.reg.write_data(dn, DataSize::Long, val);
+
+    cpu.reg.sr.modify_n(is_negative(val, DataSize::Long));
+    cpu.reg.sr.modify_z(is_zero(val, DataSize::Long));
+    cpu.reg.sr.clear_v();
+    cpu.reg.sr.clear_c();
+}
+
+fn movep(op: u16, cpu: &mut CPU) {
+    let displacement = cpu.read_pc_inc_short();
+
+    let an: RegisterNum = get_op_xn_lo(op).into();
+    let dn: RegisterNum = get_op_xn_hi(op).into();
+
+    let m_hi = get_op_m_hi(op);
+    let direction = m_hi & 0b010 != 0;
+    let size = get_op_size_bit9(op);
+
+    // TODO: check if this is correct
+    if direction {
+        // reg -> mem
+        let val = cpu.reg.read_data(dn);
+
+        let a_r = cpu.reg.read_address(an);
+        let addr = a_r + displacement as u32;
+
+        // CURR CYCLES: 8(2/0)
+        match size {
+            DataSize::Word => {
+                cpu.write_mem_byte(addr, (val >> 8) as u8);  // +4(0/1) => 12(2/1)
+                cpu.write_mem_byte(addr+2, val as u8);      // +4(0/1) => 16(2/2)
+            },
+            DataSize::Long => {
+                cpu.write_mem_byte(addr, (val >> 24) as u8);           // +4(0/1) => 12(2/1)
+                cpu.write_mem_byte(addr+2, (val >> 16) as u8);   // +4(0/1) => 16(2/2)
+                cpu.write_mem_byte(addr+4, (val >> 8) as u8);    // +4(0/1) => 20(2/3)
+                cpu.write_mem_byte(addr+6, val as u8);                // +4(0/1) => 24(2/4)
+            },
+            _ => unreachable!(),
+        }
+    } else {
+        // mem -> reg
+        let a_r = cpu.reg.read_address(an);
+        let addr = a_r + displacement as u32;
+
+        let loops = match size {
+            DataSize::Word => 2,
+            DataSize::Long => 4,
+            _ => unreachable!()
+        };
+
+        for i in 0..=loops {
+            // +4(0/1)*loops => 12(3/0) => 16(4/0) [ => 20(5/0) => 24(6/0)]
+            let val = cpu.read_mem_byte(addr + i * 2);
+            cpu.reg.write_data_byte_offset(dn, (loops - 1) - i, val);
         }
     }
 }
@@ -273,6 +475,9 @@ fn not(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);
 
     let res = !cpu.read_am(s, am);
+    cpu.cycle_when_long(s, 1);
+    cpu.write_am(s, am, res);
+    cpu.cycle_when_long(s, 1);
 
     cpu.reg.sr.modify_n(is_negative(res, s));
     cpu.reg.sr.modify_z(is_zero(res, s));
@@ -280,8 +485,46 @@ fn not(op: u16, cpu: &mut CPU) {
     cpu.reg.sr.clear_c();
 }
 
-fn get_op_size(op: u16) -> u8 {
-    ((op & 0b11_000_000) >> 6) as u8
+fn get_op_xn_hi(op: u16) -> u8 {
+    ((op & 0b111_000_000_000) >> 9) as u8
+}
+
+fn get_op_xn_lo(op: u16) -> u8 {
+    (op & 0b111) as u8
+}
+
+fn get_op_m_hi(op: u16) -> u8 {
+    ((op & 0b111_000_000) >> 6) as u8
+}
+
+fn get_op_m_lo(op: u16) -> u8 {
+    ((op & 0b111_000) >> 3) as u8
+}
+
+
+fn get_op_size(op: u16) -> DataSize {
+    // 00 (.b)
+    // 01 (.w)
+    // 10 (.l)
+    (((op & 0b11_000_000) >> 6) as u8).into()
+}
+
+fn get_op_size_bit9(op: u16) -> DataSize {
+    // 0 -> 01 (.w)
+    // 1 -> 10 (.l)
+    (((op & 0b1_000_000_000) >> 8) as u8 + 1).into()
+}
+
+fn get_op_size_move(op: u16) -> DataSize {
+    // 01 -> 00 (.b)
+    // 11 -> 01 (.w)
+    // 10 -> 10 (.l)
+    let s = ((op & 0b11_000_000_000_000) >> 12) as u8;
+
+    let sh = (s & 0b10) >> 1;
+    let sl = s & 0b01;
+
+    (((sh & !sl) << 1) | (sh & sl)).into()
 }
 
 pub(crate) fn decode_opcode(op: u16) -> Instruction {
@@ -336,7 +579,12 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
             // move, movea
             if m_hi == 0b001 {
                 // movea
-                MOVEA { op }
+                if op_hi_nibble == 0b00_01 {
+                    // movea only has sizes 11 (.w) and 10 (.l)
+                    Undefined { op }
+                } else {
+                    MOVEA { op }
+                }
             } else {
                 // move
                 MOVE { op }

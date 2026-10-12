@@ -32,7 +32,7 @@ impl MMU {
     }
 
     pub fn write_short(&mut self, addr: u32, val: u16) {
-        let hi = (val & 0xff00 >> 8) as u8;
+        let hi = ((val & 0xff00) >> 8) as u8;
         let lo = (val & 0x00ff) as u8;
 
         self.write_byte(addr, hi);
@@ -40,7 +40,7 @@ impl MMU {
     }
 
     pub fn write_long(&mut self, addr: u32, val: u32) {
-        let hi = (val & 0xffff0000 >> 16) as u16;
+        let hi = ((val & 0xffff0000) >> 16) as u16;
         let lo = (val & 0x0000ffff) as u16;
 
         self.write_short(addr, hi);

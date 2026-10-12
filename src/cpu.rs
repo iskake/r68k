@@ -1,6 +1,51 @@
-use crate::{cpu::inst::AddressingMode, mmu::MMU};
+use crate::{bits::{DataSize, SIZE_MASK_LOWER, SIZE_MASK_UPPER, sign_extend, sign_extend_byte}, cpu::inst::AddressingMode, mmu::MMU};
 
 mod inst;
+
+#[derive(Debug, Clone, Copy)]
+enum RegisterNum {
+    R0,
+    R1,
+    R2,
+    R3,
+    R4,
+    R5,
+    R6,
+    R7,
+}
+
+impl From<u8> for RegisterNum {
+    fn from(value: u8) -> Self {
+        assert!(value <= 7, "Register number must be in the range 0..=7.");
+
+        match value {
+            0 => RegisterNum::R0,
+            1 => RegisterNum::R1,
+            2 => RegisterNum::R2,
+            3 => RegisterNum::R3,
+            4 => RegisterNum::R4,
+            5 => RegisterNum::R5,
+            6 => RegisterNum::R6,
+            7 => RegisterNum::R7,
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl Into<u8> for RegisterNum {
+    fn into(self) -> u8 {
+        match self {
+            RegisterNum::R0 => 0,
+            RegisterNum::R1 => 1,
+            RegisterNum::R2 => 2,
+            RegisterNum::R3 => 3,
+            RegisterNum::R4 => 4,
+            RegisterNum::R5 => 5,
+            RegisterNum::R6 => 6,
+            RegisterNum::R7 => 7,
+        }
+    }
+}
 
 struct StatusRegister {
     val: u16,
@@ -136,6 +181,103 @@ impl Registers {
             sr: StatusRegister::new(),
         }
     }
+
+    fn read_data(&self, dn: RegisterNum) -> u32 {
+        match dn {
+            RegisterNum::R0 => self.d0,
+            RegisterNum::R1 => self.d1,
+            RegisterNum::R2 => self.d2,
+            RegisterNum::R3 => self.d3,
+            RegisterNum::R4 => self.d4,
+            RegisterNum::R5 => self.d5,
+            RegisterNum::R6 => self.d6,
+            RegisterNum::R7 => self.d7,
+        }
+    }
+
+    fn read_address(&self, an: RegisterNum) -> u32 {
+        match an {
+            RegisterNum::R0 => self.a0,
+            RegisterNum::R1 => self.a1,
+            RegisterNum::R2 => self.a2,
+            RegisterNum::R3 => self.a3,
+            RegisterNum::R4 => self.a4,
+            RegisterNum::R5 => self.a5,
+            RegisterNum::R6 => self.a6,
+            RegisterNum::R7 => self.usp,
+        }
+    }
+
+    fn write_data(&mut self, dn: RegisterNum, size: DataSize, val: u32) {
+        let s: usize = size.into();
+
+        match dn {
+            RegisterNum::R0 => self.d0 = (self.d0 & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+            RegisterNum::R1 => self.d1 = (self.d1 & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+            RegisterNum::R2 => self.d2 = (self.d2 & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+            RegisterNum::R3 => self.d3 = (self.d3 & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+            RegisterNum::R4 => self.d4 = (self.d4 & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+            RegisterNum::R5 => self.d5 = (self.d5 & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+            RegisterNum::R6 => self.d6 = (self.d6 & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+            RegisterNum::R7 => self.d7 = (self.d7 & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+        }
+    }
+
+    fn write_data_byte_offset(&mut self, dn: RegisterNum, byte_offset: u32, val: u8) {
+        let mask = 0xffff_ffffu32 ^ (0xff << (byte_offset * 8));
+
+        match dn {
+            RegisterNum::R0 => self.d0 = (self.d0 & mask) | ((val as u32) << (byte_offset * 8)),
+            RegisterNum::R1 => self.d1 = (self.d1 & mask) | ((val as u32) << (byte_offset * 8)),
+            RegisterNum::R2 => self.d2 = (self.d2 & mask) | ((val as u32) << (byte_offset * 8)),
+            RegisterNum::R3 => self.d3 = (self.d3 & mask) | ((val as u32) << (byte_offset * 8)),
+            RegisterNum::R4 => self.d4 = (self.d4 & mask) | ((val as u32) << (byte_offset * 8)),
+            RegisterNum::R5 => self.d5 = (self.d5 & mask) | ((val as u32) << (byte_offset * 8)),
+            RegisterNum::R6 => self.d6 = (self.d6 & mask) | ((val as u32) << (byte_offset * 8)),
+            RegisterNum::R7 => self.d7 = (self.d7 & mask) | ((val as u32) << (byte_offset * 8)),
+        }
+    }
+
+    fn write_address(&mut self, an: RegisterNum, size: DataSize, val: u32) {
+        let s: usize = size.into();
+
+        match an {
+            RegisterNum::R0 => self.a0  = (self.a0  & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+            RegisterNum::R1 => self.a1  = (self.a1  & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+            RegisterNum::R2 => self.a2  = (self.a2  & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+            RegisterNum::R3 => self.a3  = (self.a3  & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+            RegisterNum::R4 => self.a4  = (self.a4  & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+            RegisterNum::R5 => self.a5  = (self.a5  & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+            RegisterNum::R6 => self.a6  = (self.a6  & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+            RegisterNum::R7 => self.usp = (self.usp & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+        }
+    }
+
+    fn inc_address(&mut self, an: RegisterNum, size: DataSize) {
+        match an {
+            RegisterNum::R0 => self.a0  += size.sizeof() as u32,
+            RegisterNum::R1 => self.a1  += size.sizeof() as u32,
+            RegisterNum::R2 => self.a2  += size.sizeof() as u32,
+            RegisterNum::R3 => self.a3  += size.sizeof() as u32,
+            RegisterNum::R4 => self.a4  += size.sizeof() as u32,
+            RegisterNum::R5 => self.a5  += size.sizeof() as u32,
+            RegisterNum::R6 => self.a6  += size.sizeof() as u32,
+            RegisterNum::R7 => self.usp += if let DataSize::Byte = size { 2 } else { size.sizeof() as u32 },
+        }
+    }
+
+    fn dec_address(&mut self, an: RegisterNum, size: DataSize) {
+        match an {
+            RegisterNum::R0 => self.a0  -= size.sizeof() as u32,
+            RegisterNum::R1 => self.a1  -= size.sizeof() as u32,
+            RegisterNum::R2 => self.a2  -= size.sizeof() as u32,
+            RegisterNum::R3 => self.a3  -= size.sizeof() as u32,
+            RegisterNum::R4 => self.a4  -= size.sizeof() as u32,
+            RegisterNum::R5 => self.a5  -= size.sizeof() as u32,
+            RegisterNum::R6 => self.a6  -= size.sizeof() as u32,
+            RegisterNum::R7 => self.usp -= if let DataSize::Byte = size { 2 } else { size.sizeof() as u32 },
+        }
+    }
 }
 
 pub enum CPURevision {
@@ -206,32 +348,317 @@ impl CPU {
             self.reg.ssp,
         );
         println!("  sr hi: {:08b} ccr: {:08b}", self.reg.sr.hi(), self.reg.sr.ccr());
-        println!("  pc: {:08x}", self.reg.pc);
+        println!("  pc: {:08x}, cycles: {}", self.reg.pc, self.cycles);
     }
 
-    fn read_am(&mut self, size: u8, am: AddressingMode) -> u32 {
+    /// Cycles: 0(0/0)
+    pub fn write_mem_byte_internal(&mut self, addr: u32, val: u8) {
+        self.mmu.write_byte(addr, val);
+    }
+
+    /// Cycles: 0(0/0)
+    pub fn write_mem_short_internal(&mut self, addr: u32, val: u16) {
+        self.mmu.write_short(addr, val);
+    }
+
+    /// Cycles: 0(0/0)
+    pub fn write_mem_long_internal(&mut self, addr: u32, val: u32) {
+        self.mmu.write_long(addr, val);
+    }
+
+    /// Cycles: 4(0/1)
+    fn write_mem_byte(&mut self, addr: u32, val: u8) {
+        self.cycle(4);
+        self.write_mem_byte_internal(addr, val);
+    }
+
+    /// Cycles: 4(0/1)
+    fn write_mem_short(&mut self, addr: u32, val: u16) {
+        self.cycle(4);
+        self.write_mem_short_internal(addr, val);
+    }
+
+    /// Cycles: 8(0/2)
+    fn write_mem_long(&mut self, addr: u32, val: u32) {
+        self.cycle(4);
+        self.write_mem_long_internal(addr, val);
+    }
+
+    /// Cycles: 4(1/0)
+    fn read_mem_byte(&mut self, addr: u32) -> u8 {
+        // Bus is 16 bits wide, so 1 read cycle (same as short) is always performed
+        self.cycle(4);
+        self.mmu.read_byte(addr)
+    }
+
+    /// Cycles: 4(1/0)
+    fn read_mem_short(&mut self, addr: u32) -> u16 {
+        self.cycle(4);
+        self.mmu.read_short(addr)
+    }
+
+    /// Cycles: 8(2/0)
+    fn read_mem_long(&mut self, addr: u32) -> u32 {
+        // ? Timing question: does simply cycling twice (8) have the same
+        // ? effect as two short reads in all cases?
+        // self.cycle(8);
+        // self.mmu.read_long(addr);
+        let val_hi = self.read_mem_short(addr) as u32;
+        let val_lo = self.read_mem_short(addr+2) as u32;
+
+        (val_hi << 16) | val_lo
+    }
+
+    /// Read a byte/word/long (based on the `size`) at address `addr`
+    /// 
+    /// Cycles:
+    /// - `.b: 4(1/0)`
+    /// - `.w: 4(1/0)`
+    /// - `.l: 8(2/0)`
+    fn read_mem_size(&mut self, size: DataSize, addr: u32) -> u32 {
+        match size {
+            // 1 read cycle
+            DataSize::Byte => self.read_mem_byte(addr) as u32,
+            // 1 read cycle
+            DataSize::Word => self.read_mem_short(addr) as u32,
+            // 2 read cycles
+            DataSize::Long => self.read_mem_long(addr),
+        }
+    }
+
+    /// Read a brief extension word
+    ///
+    /// Cycles: 4(1/0)
+    fn read_extension_brief(&mut self) -> (bool, RegisterNum, DataSize, u8, u8) {
+        // TODO: full extension words (used in 68020, 68030, and 68040)
+        let w = self.read_pc_inc_short();
+
+        let mode = w & 0x8000 != 0;
+        let xn: RegisterNum = (((w & 0x7000) >> 12) as u8).into();
+        let size: DataSize = (((w & 0x0800) >> 11) as u8 + 1).into();
+
+        // Used in cpu32, 68020, 68030, 68040
+        let scale_factor = ((w & 0x0700) >> 8) as u8;
+
+        let displacement = (w & 0x00ff) as u8;
+
+        (mode, xn, size, scale_factor, displacement)
+    }
+
+    /// Perform a read using the specified addressing mode and with the specified size.
+    /// 
+    /// Cycles:
+    /// 
+    /// |        |.b, .w | .l     |
+    /// |--------|-------|--------|
+    /// |Dn      |0(0/0) | 0(0/0) |
+    /// |An      |0(0/0) | 0(0/0) |
+    /// |(An)    |4(1/0) | 8(2/0) |
+    /// |(An)+   |4(1/0) | 8(2/0) |
+    /// |-(An)   |6(1/0) | 10(2/0)|
+    /// |d(An)   |8(2/0) | 12(3/0)|
+    /// |d(An,ix)|10(2/0)| 14(3/0)|
+    /// |xxx.w   |8(2/0) | 12(3/0)|
+    /// |xxx.l   |10(2/0)| 14(3/0)|
+    /// |d(PC)   |8(2/0) | 12(3/0)|
+    /// |d(PC,ix)|12(3/0)| 16(4/0)|
+    /// |#xxx    |4(1/0) | 8(2/0) |
+    pub fn read_am(&mut self, size: DataSize, am: AddressingMode) -> u32 {
         // Should read a byte/short/long (based on size) from the location specified by the addressing mode
-        todo!()
+        match am {
+            // Cycle counts c(r/w)
+            // .b, .w | .l
+            // 0(0/0) | 0(0/0)
+            AddressingMode::DataReg(dn) => self.reg.read_data(dn),
+            // 0(0/0) | 0(0/0)
+            AddressingMode::AddrReg(an) => self.reg.read_address(an),
+            // 4(1/0) | 8(2/0)
+            AddressingMode::Addr(an) => self.read_mem_size(size, self.reg.read_address(an)),
+            // 4(1/0) | 8(2/0)
+            AddressingMode::AddrPostInc(an) => {
+                let r = self.reg.read_address(an);
+                self.reg.inc_address(an, size);
+
+                self.read_mem_size(size, r)
+            },
+            // 6(1/0) | 10(2/0)
+            AddressingMode::AddrPreDec(an) => {
+                self.reg.dec_address(an, size);
+                let r = self.reg.read_address(an);
+
+                // ?
+                self.cycle(2);
+
+                self.read_mem_size(size, r)
+            },
+            // 8(2/0) | 12(3/0)
+            AddressingMode::AddrDisplace(an) => {
+                let r = self.reg.read_address(an);
+                let d = sign_extend(DataSize::Long, self.read_pc_inc_short() as u32);
+                let addr = r + d;
+
+                self.read_mem_size(size, addr)
+            },
+            // 10(2/0)| 14(3/0)
+            AddressingMode::AddrIdx(an) => {
+                // TODO: other indexed addressing modes
+                let a_val = self.reg.read_address(an);
+                let (x, xn, s, _, d) = self.read_extension_brief();
+                let displacement = sign_extend_byte(d);
+
+                let x_reg_val = if x {
+                    // address register
+                    self.reg.read_address(xn)
+                } else {
+                    // data register
+                    self.reg.read_data(xn)
+                };
+
+                let x_val = match s {
+                    DataSize::Word => sign_extend(DataSize::Long, x_reg_val),
+                    DataSize::Long => x_reg_val,
+                    _ => unreachable!()
+                };
+
+                // ?
+                self.cycle(2);
+
+                let addr = a_val + displacement + x_val;
+
+                self.read_mem_size(size, addr)
+            },
+            // 8(2/0) | 12(3/0)
+            AddressingMode::PCDisplace => {
+                let pc = self.reg.pc;
+                let d = sign_extend(DataSize::Long, self.read_pc_inc_short() as u32);
+                let addr = pc + d;
+
+                self.read_mem_size(size, addr)
+            },
+            // 10(2/0)| 14(3/0)
+            AddressingMode::PCIdx => {
+                // TODO: other indexed addressing modes
+                let pc_val = self.reg.pc;
+
+                let (x, xn, s, _, d) = self.read_extension_brief();
+                let displacement = sign_extend_byte(d);
+
+                let x_reg_val = if x {
+                    // address register
+                    self.reg.read_address(xn)
+                } else {
+                    // data register
+                    self.reg.read_data(xn)
+                };
+
+                let x_val = match s {
+                    DataSize::Word => sign_extend(DataSize::Long, x_reg_val),
+                    DataSize::Long => x_reg_val,
+                    _ => unreachable!()
+                };
+
+                // ?
+                self.cycle(2);
+
+                let addr = pc_val + displacement + x_val;
+
+                self.read_mem_size(size, addr)
+            },
+            // 8(2/0) | 12(3/0)
+            AddressingMode::AbsShort => {
+                // ?
+                let addr = sign_extend(DataSize::Long, self.read_pc_inc_short() as u32);
+                self.read_mem_size(size, addr)
+            },
+            // 12(3/0)| 16(4/0)
+            AddressingMode::AbsLong => {
+                let addr = self.read_pc_inc_long();
+                self.read_mem_size(size, addr)
+            },
+            // 4(1/0) | 8(2/0)
+            AddressingMode::Imm => {
+                match size {
+                    DataSize::Word => self.read_pc_inc_short() as u32,
+                    DataSize::Long => self.read_pc_inc_long(),
+                    _ => unreachable!(),
+                }
+            },
+            AddressingMode::Invalid => panic!("Cannot read with invalid addressing mode"),
+        }
     }
 
-    fn read_pc_inc_short(&mut self) -> u16 {
-        let val = self.mmu.read_short(self.reg.pc);
+    /// Perform a write using the specified addressing mode and with the specified size.
+    /// 
+    /// Cycles:
+    /// 
+    /// |        |.b, .w | .l     |
+    /// |--------|-------|--------|
+    /// |Dn      |0(0/0) | 0(0/0) |
+    /// |An      |0(0/0) | 0(0/0) |
+    /// |(An)    |4(1/0) | 8(2/0) |
+    /// |(An)+   |4(1/0) | 8(2/0) |
+    /// |-(An)   |6(1/0) | 10(2/0)|
+    /// |d(An)   |8(2/0) | 12(3/0)|
+    /// |d(An,ix)|10(2/0)| 14(3/0)|
+    /// |xxx.w   |8(2/0) | 12(3/0)|
+    /// |xxx.l   |10(2/0)| 14(3/0)|
+    /// |d(PC)   |8(2/0) | 12(3/0)|
+    /// |d(PC,ix)|12(3/0)| 16(4/0)|
+    /// |#xxx    |4(1/0) | 8(2/0) |
+    pub fn write_am(&mut self, size: DataSize, am: AddressingMode, val: u32) {
+        match am {
+            AddressingMode::DataReg(dn) => self.reg.write_data(dn, size, val),
+            AddressingMode::AddrReg(an) => self.reg.write_address(an, size, val),
+            AddressingMode::Addr(_) => todo!(),
+            AddressingMode::AddrPostInc(_) => todo!(),
+            AddressingMode::AddrPreDec(_) => todo!(),
+            AddressingMode::AddrDisplace(_) => todo!(),
+            AddressingMode::AddrIdx(_) => todo!(),
+            AddressingMode::PCDisplace => todo!(),
+            AddressingMode::PCIdx => todo!(),
+            AddressingMode::AbsShort => todo!(),
+            AddressingMode::AbsLong => todo!(),
+            AddressingMode::Imm => todo!(),
+            AddressingMode::Invalid => panic!("Cannot write with invalid addressing mode"),
+        }
+    }
+
+    /// Cycles: 4(1/0)
+    pub fn read_pc_inc_short(&mut self) -> u16 {
+        let val = self.read_mem_short(self.reg.pc);
         self.reg.pc += 2;
         val
+    }
+
+    /// Cycles: 8(2/0)
+    pub fn read_pc_inc_long(&mut self) -> u32 {
+        let val_hi = self.read_pc_inc_short() as u32;
+        let val_lo = self.read_pc_inc_short() as u32;
+        (val_hi << 16) | val_lo
     }
 
     fn fetch_and_run(&mut self) {
         let op = self.read_pc_inc_short();
         let inst = inst::decode_opcode(op);
-        println!("Got instruction: {inst:?}");
+        println!("   Got instruction: {inst} ({op:016b})");
         inst.run(self);
     }
 
     pub fn run(&mut self) {
-        self.print_state();
+        println!();
         self.fetch_and_run();
+        self.print_state();
     }
 
-    pub fn dbg_run_op(&mut self, op: u16) {
+    fn cycle(&mut self, amount: usize) {
+        self.cycles += amount;
+    }
+
+    /// Cycle only when size is .l
+    fn cycle_when_long(&mut self, size: DataSize, amount: usize) {
+        match size {
+            DataSize::Long => self.cycle(amount),
+            _ => {}
+        }
     }
 }
