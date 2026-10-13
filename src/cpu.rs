@@ -296,6 +296,8 @@ pub struct CPU {
     mmu: MMU,
 
     cycles: usize,
+    read_cycles: usize,
+    write_cycles: usize,
     revision: CPURevision,
 }
 
@@ -314,6 +316,8 @@ impl CPU {
             reg: Registers::new(),
             mmu: MMU::new(0x10000),
             cycles: 0,
+            read_cycles: 0,
+            write_cycles: 0,
             revision: rev,
         }
     }
@@ -369,31 +373,54 @@ impl CPU {
     /// Cycles: 4(0/1)
     fn write_mem_byte(&mut self, addr: u32, val: u8) {
         self.cycle(4);
+        self.write_cycles += 1;
         self.write_mem_byte_internal(addr, val);
     }
 
     /// Cycles: 4(0/1)
     fn write_mem_short(&mut self, addr: u32, val: u16) {
         self.cycle(4);
+        self.write_cycles += 1;
         self.write_mem_short_internal(addr, val);
     }
 
     /// Cycles: 8(0/2)
     fn write_mem_long(&mut self, addr: u32, val: u32) {
-        self.cycle(4);
-        self.write_mem_long_internal(addr, val);
+        let val_hi = ((val & 0xffff_0000) >> 16) as u16;
+        let val_lo = (val & 0x0000_ffff) as u16;
+        self.write_mem_short(addr, val_hi);
+        self.write_mem_short(addr, val_lo);
+    }
+
+    /// Write a byte/word/long (based on the `size`) to address `addr`
+    /// 
+    /// Cycles:
+    /// - `.b: 4(0/1)`
+    /// - `.w: 4(0/1)`
+    /// - `.l: 8(0/2)`
+    fn write_mem_size(&mut self, size: DataSize, addr: u32, val: u32) {
+        match size {
+            // 1 write cycle
+            DataSize::Byte => self.write_mem_byte(addr, val as u8),
+            // 1 write cycle
+            DataSize::Word => self.write_mem_short(addr, val as u16),
+            // 2 write cycles
+            DataSize::Long => self.write_mem_long(addr, val),
+        }
     }
 
     /// Cycles: 4(1/0)
     fn read_mem_byte(&mut self, addr: u32) -> u8 {
         // Bus is 16 bits wide, so 1 read cycle (same as short) is always performed
         self.cycle(4);
+        self.read_cycles += 1;
         self.mmu.read_byte(addr)
     }
 
     /// Cycles: 4(1/0)
     fn read_mem_short(&mut self, addr: u32) -> u16 {
         self.cycle(4);
+        self.read_cycles += 1;
         self.mmu.read_short(addr)
     }
 
@@ -445,41 +472,22 @@ impl CPU {
         (mode, xn, size, scale_factor, displacement)
     }
 
-    /// Perform a read using the specified addressing mode and with the specified size.
-    /// 
-    /// Cycles:
-    /// 
-    /// |        |.b, .w | .l     |
-    /// |--------|-------|--------|
-    /// |Dn      |0(0/0) | 0(0/0) |
-    /// |An      |0(0/0) | 0(0/0) |
-    /// |(An)    |4(1/0) | 8(2/0) |
-    /// |(An)+   |4(1/0) | 8(2/0) |
-    /// |-(An)   |6(1/0) | 10(2/0)|
-    /// |d(An)   |8(2/0) | 12(3/0)|
-    /// |d(An,ix)|10(2/0)| 14(3/0)|
-    /// |xxx.w   |8(2/0) | 12(3/0)|
-    /// |xxx.l   |10(2/0)| 14(3/0)|
-    /// |d(PC)   |8(2/0) | 12(3/0)|
-    /// |d(PC,ix)|12(3/0)| 16(4/0)|
-    /// |#xxx    |4(1/0) | 8(2/0) |
-    pub fn read_am(&mut self, size: DataSize, am: AddressingMode) -> u32 {
-        // Should read a byte/short/long (based on size) from the location specified by the addressing mode
+    fn calculate_am_operand(&mut self, size: DataSize, am: AddressingMode) -> u32 {
         match am {
             // Cycle counts c(r/w)
             // .b, .w | .l
             // 0(0/0) | 0(0/0)
-            AddressingMode::DataReg(dn) => self.reg.read_data(dn),
+            AddressingMode::DataReg(dn) => 0,
             // 0(0/0) | 0(0/0)
-            AddressingMode::AddrReg(an) => self.reg.read_address(an),
+            AddressingMode::AddrReg(an) => 0,
             // 4(1/0) | 8(2/0)
-            AddressingMode::Addr(an) => self.read_mem_size(size, self.reg.read_address(an)),
+            AddressingMode::Addr(an) => self.reg.read_address(an),
             // 4(1/0) | 8(2/0)
             AddressingMode::AddrPostInc(an) => {
                 let r = self.reg.read_address(an);
                 self.reg.inc_address(an, size);
 
-                self.read_mem_size(size, r)
+                r
             },
             // 6(1/0) | 10(2/0)
             AddressingMode::AddrPreDec(an) => {
@@ -489,15 +497,14 @@ impl CPU {
                 // ?
                 self.cycle(2);
 
-                self.read_mem_size(size, r)
+                r
             },
             // 8(2/0) | 12(3/0)
             AddressingMode::AddrDisplace(an) => {
                 let r = self.reg.read_address(an);
                 let d = sign_extend(DataSize::Long, self.read_pc_inc_short() as u32);
                 let addr = r + d;
-
-                self.read_mem_size(size, addr)
+                addr
             },
             // 10(2/0)| 14(3/0)
             AddressingMode::AddrIdx(an) => {
@@ -525,7 +532,7 @@ impl CPU {
 
                 let addr = a_val + displacement + x_val;
 
-                self.read_mem_size(size, addr)
+                addr
             },
             // 8(2/0) | 12(3/0)
             AddressingMode::PCDisplace => {
@@ -533,7 +540,7 @@ impl CPU {
                 let d = sign_extend(DataSize::Long, self.read_pc_inc_short() as u32);
                 let addr = pc + d;
 
-                self.read_mem_size(size, addr)
+                addr
             },
             // 10(2/0)| 14(3/0)
             AddressingMode::PCIdx => {
@@ -562,19 +569,57 @@ impl CPU {
 
                 let addr = pc_val + displacement + x_val;
 
-                self.read_mem_size(size, addr)
+                addr
             },
             // 8(2/0) | 12(3/0)
             AddressingMode::AbsShort => {
                 // ?
                 let addr = sign_extend(DataSize::Long, self.read_pc_inc_short() as u32);
-                self.read_mem_size(size, addr)
+
+                addr
             },
             // 12(3/0)| 16(4/0)
             AddressingMode::AbsLong => {
                 let addr = self.read_pc_inc_long();
-                self.read_mem_size(size, addr)
+
+                addr
             },
+            // 4(1/0) | 8(2/0)
+            AddressingMode::Imm => {
+                0
+            },
+            AddressingMode::Invalid => 0,
+        }
+    }
+
+    /// Perform a read using the specified addressing mode and with the specified size.
+    /// 
+    /// Cycles:
+    /// 
+    /// |        |.b, .w | .l     |
+    /// |--------|-------|--------|
+    /// |Dn      |0(0/0) | 0(0/0) |
+    /// |An      |0(0/0) | 0(0/0) |
+    /// |(An)    |4(1/0) | 8(2/0) |
+    /// |(An)+   |4(1/0) | 8(2/0) |
+    /// |-(An)   |6(1/0) | 10(2/0)|
+    /// |d(An)   |8(2/0) | 12(3/0)|
+    /// |d(An,ix)|10(2/0)| 14(3/0)|
+    /// |xxx.w   |8(2/0) | 12(3/0)|
+    /// |xxx.l   |10(2/0)| 14(3/0)|
+    /// |d(PC)   |8(2/0) | 12(3/0)|
+    /// |d(PC,ix)|12(3/0)| 16(4/0)|
+    /// |#xxx    |4(1/0) | 8(2/0) |
+    pub fn read_am(&mut self, size: DataSize, am: AddressingMode) -> u32 {
+        let addr = self.calculate_am_operand(size, am);
+
+        match am {
+            // Cycle counts c(r/w)
+            // .b, .w | .l
+            // 0(0/0) | 0(0/0)
+            AddressingMode::DataReg(dn) => self.reg.read_data(dn),
+            // 0(0/0) | 0(0/0)
+            AddressingMode::AddrReg(an) => self.reg.read_address(an),
             // 4(1/0) | 8(2/0)
             AddressingMode::Imm => {
                 match size {
@@ -584,6 +629,7 @@ impl CPU {
                 }
             },
             AddressingMode::Invalid => panic!("Cannot read with invalid addressing mode"),
+            _ => self.read_mem_size(size, addr)
         }
     }
 
@@ -606,20 +652,18 @@ impl CPU {
     /// |d(PC,ix)|12(3/0)| 16(4/0)|
     /// |#xxx    |4(1/0) | 8(2/0) |
     pub fn write_am(&mut self, size: DataSize, am: AddressingMode, val: u32) {
+        let addr = self.calculate_am_operand(size, am);
+
         match am {
+            // 0(0/0)
             AddressingMode::DataReg(dn) => self.reg.write_data(dn, size, val),
+            // 0(0/0)
             AddressingMode::AddrReg(an) => self.reg.write_address(an, size, val),
-            AddressingMode::Addr(_) => todo!(),
-            AddressingMode::AddrPostInc(_) => todo!(),
-            AddressingMode::AddrPreDec(_) => todo!(),
-            AddressingMode::AddrDisplace(_) => todo!(),
-            AddressingMode::AddrIdx(_) => todo!(),
-            AddressingMode::PCDisplace => todo!(),
-            AddressingMode::PCIdx => todo!(),
-            AddressingMode::AbsShort => todo!(),
-            AddressingMode::AbsLong => todo!(),
-            AddressingMode::Imm => todo!(),
+            // x(n/a)
+            AddressingMode::Imm => panic!("Cannot write to immediate"),
             AddressingMode::Invalid => panic!("Cannot write with invalid addressing mode"),
+            // 4(0/1) | 8(0/2)
+            _ => self.write_mem_size(size, addr, val)
         }
     }
 
@@ -646,8 +690,20 @@ impl CPU {
 
     pub fn run(&mut self) {
         println!();
+        let pre_cycles = self.cycles;
+        let pre_cycles_read = self.read_cycles;
+        let pre_cycles_write= self.write_cycles;
         self.fetch_and_run();
+        let post_cycles = self.cycles;
+        let post_cycles_read = self.read_cycles;
+        let post_cycles_write= self.write_cycles;
         self.print_state();
+        println!(
+            "TOOK CYCLES: {}({}/{})",
+            post_cycles - pre_cycles,
+            post_cycles_read - pre_cycles_read,
+            post_cycles_write - pre_cycles_write
+        );
     }
 
     fn cycle(&mut self, amount: usize) {
