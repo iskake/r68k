@@ -391,99 +391,12 @@ impl Instruction {
     }
 }
 
-fn move_(op: u16, cpu: &mut CPU) {
-    let s = get_op_size_move(op);
-    let am_src = AddressingMode::decode_op(op);
 
-    let xn_hi = get_op_xn_hi(op);
-    let m_hi = get_op_m_hi(op);
-    let am_dst = AddressingMode::decode(m_hi, xn_hi);
-
-    let src_val = cpu.read_am(s, am_src);
-    cpu.write_am(s, am_dst, src_val);
-
-    cpu.reg.sr.modify_n(is_negative(src_val, s));
-    cpu.reg.sr.modify_z(is_zero(src_val, s));
-    cpu.reg.sr.clear_v();
-    cpu.reg.sr.clear_c();
-}
-
-fn moveq(op: u16, cpu: &mut CPU) {
-    let dn = get_op_xn_hi(op).into();
-    let val = sign_extend_byte(0xff);
-    cpu.reg.write_data(dn, DataSize::Long, val);
-
-    cpu.reg.sr.modify_n(is_negative(val, DataSize::Long));
-    cpu.reg.sr.modify_z(is_zero(val, DataSize::Long));
-    cpu.reg.sr.clear_v();
-    cpu.reg.sr.clear_c();
-}
-
-fn movep(op: u16, cpu: &mut CPU) {
-    let displacement = cpu.read_pc_inc_short();
-
-    let an: RegisterNum = get_op_xn_lo(op).into();
-    let dn: RegisterNum = get_op_xn_hi(op).into();
-
-    let m_hi = get_op_m_hi(op);
-    let direction = m_hi & 0b010 != 0;
-    let size = get_op_size_bit9(op);
-
-    // TODO: check if this is correct
-    if direction {
-        // reg -> mem
-        let val = cpu.reg.read_data(dn);
-
-        let a_r = cpu.reg.read_address(an);
-        let addr = a_r + displacement as u32;
-
-        // CURR CYCLES: 8(2/0)
-        match size {
-            DataSize::Word => {
-                cpu.write_mem_byte(addr, (val >> 8) as u8);  // +4(0/1) => 12(2/1)
-                cpu.write_mem_byte(addr+2, val as u8);      // +4(0/1) => 16(2/2)
-            },
-            DataSize::Long => {
-                cpu.write_mem_byte(addr, (val >> 24) as u8);           // +4(0/1) => 12(2/1)
-                cpu.write_mem_byte(addr+2, (val >> 16) as u8);   // +4(0/1) => 16(2/2)
-                cpu.write_mem_byte(addr+4, (val >> 8) as u8);    // +4(0/1) => 20(2/3)
-                cpu.write_mem_byte(addr+6, val as u8);                // +4(0/1) => 24(2/4)
-            },
-            _ => unreachable!(),
-        }
-    } else {
-        // mem -> reg
-        let a_r = cpu.reg.read_address(an);
-        let addr = a_r + displacement as u32;
-
-        let loops = match size {
-            DataSize::Word => 2,
-            DataSize::Long => 4,
-            _ => unreachable!()
-        };
-
-        for i in 0..=loops {
-            // +4(0/1)*loops => 12(3/0) => 16(4/0) [ => 20(5/0) => 24(6/0)]
-            let val = cpu.read_mem_byte(addr + i * 2);
-            cpu.reg.write_data_byte_offset(dn, (loops - 1) - i, val);
-        }
-    }
-}
-
-fn not(op: u16, cpu: &mut CPU) {
-    let s = get_op_size(op);
-    let am = AddressingMode::decode_op(op);
-
-    let res = !cpu.read_am(s, am);
-    cpu.cycle_when_long(s, 1);
-    cpu.write_am(s, am, res);
-    cpu.cycle_when_long(s, 1);
-
-    cpu.reg.sr.modify_n(is_negative(res, s));
-    cpu.reg.sr.modify_z(is_zero(res, s));
-    cpu.reg.sr.clear_v();
-    cpu.reg.sr.clear_c();
-}
+/********************************
+ *                              *
+ *       OPCODE DECODING        *
+ *                              *
+ ********************************/
 
 fn get_op_xn_hi(op: u16) -> u8 {
     ((op & 0b111_000_000_000) >> 9) as u8
@@ -500,7 +413,6 @@ fn get_op_m_hi(op: u16) -> u8 {
 fn get_op_m_lo(op: u16) -> u8 {
     ((op & 0b111_000) >> 3) as u8
 }
-
 
 fn get_op_size(op: u16) -> DataSize {
     // 00 (.b)
@@ -835,3 +747,108 @@ fn decode_opcode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u
         }
     }
 }
+
+/********************************
+ *                              *
+ * INSTRUCTION IMPLEMENTATIONS  *
+ *                              *
+ ********************************/
+
+fn move_(op: u16, cpu: &mut CPU) {
+    let s = get_op_size_move(op);
+    let am_src = AddressingMode::decode_op(op);
+
+    let xn_hi = get_op_xn_hi(op);
+    let m_hi = get_op_m_hi(op);
+    let am_dst = AddressingMode::decode(m_hi, xn_hi);
+
+    let src_val = cpu.read_am(s, am_src);
+    cpu.write_am(s, am_dst, src_val);
+
+    cpu.reg.sr.modify_n(is_negative(src_val, s));
+    cpu.reg.sr.modify_z(is_zero(src_val, s));
+    cpu.reg.sr.clear_v();
+    cpu.reg.sr.clear_c();
+}
+
+fn moveq(op: u16, cpu: &mut CPU) {
+    let dn = get_op_xn_hi(op).into();
+    let val = sign_extend_byte(0xff);
+    cpu.reg.write_data(dn, DataSize::Long, val);
+
+    cpu.reg.sr.modify_n(is_negative(val, DataSize::Long));
+    cpu.reg.sr.modify_z(is_zero(val, DataSize::Long));
+    cpu.reg.sr.clear_v();
+    cpu.reg.sr.clear_c();
+}
+
+fn movep(op: u16, cpu: &mut CPU) {
+    let displacement = cpu.read_pc_inc_short();
+
+    let an: RegisterNum = get_op_xn_lo(op).into();
+    let dn: RegisterNum = get_op_xn_hi(op).into();
+
+    let m_hi = get_op_m_hi(op);
+    let direction = m_hi & 0b010 != 0;
+    let size = get_op_size_bit9(op);
+
+    // TODO: check if this is correct
+    if direction {
+        // reg -> mem
+        println!("MOVEP REG -> MEM");
+        let val = cpu.reg.read_data(dn);
+
+        let a_r = cpu.reg.read_address(an);
+        let addr = a_r + displacement as u32;
+
+        // CURR CYCLES: 8(2/0)
+        match size {
+            DataSize::Word => {
+                cpu.write_mem_byte(addr, (val >> 8) as u8);  // +4(0/1) => 12(2/1)
+                cpu.write_mem_byte(addr+2, val as u8);      // +4(0/1) => 16(2/2)
+            },
+            DataSize::Long => {
+                cpu.write_mem_byte(addr, (val >> 24) as u8);           // +4(0/1) => 12(2/1)
+                cpu.write_mem_byte(addr+2, (val >> 16) as u8);   // +4(0/1) => 16(2/2)
+                cpu.write_mem_byte(addr+4, (val >> 8) as u8);    // +4(0/1) => 20(2/3)
+                cpu.write_mem_byte(addr+6, val as u8);                // +4(0/1) => 24(2/4)
+            },
+            _ => unreachable!(),
+        }
+    } else {
+        // mem -> reg
+        println!("MOVEP MEM -> REG");
+        let a_r = cpu.reg.read_address(an);
+        let addr = a_r + displacement as u32;
+
+        let loops = match size {
+            DataSize::Word => 2,
+            DataSize::Long => 4,
+            _ => unreachable!()
+        };
+
+        // CURR CYCLES: 8(2/0)
+        for i in 0..loops {
+            // +4(1/0)*loops => 12(3/0) => 16(4/0) [ => 20(5/0) => 24(6/0)]
+            let val = cpu.read_mem_byte(addr + i * 2);
+            cpu.reg.write_data_byte_offset(dn, (loops - 1) - i, val);
+        }
+    }
+}
+
+fn not(op: u16, cpu: &mut CPU) {
+    let s = get_op_size(op);
+    let am = AddressingMode::decode_op(op);
+
+    let res = !cpu.read_am(s, am);
+    cpu.cycle_when_long(s, 1);
+    cpu.write_am(s, am, res);
+    cpu.cycle_when_long(s, 1);
+
+    cpu.reg.sr.modify_n(is_negative(res, s));
+    cpu.reg.sr.modify_z(is_zero(res, s));
+    cpu.reg.sr.clear_v();
+    cpu.reg.sr.clear_c();
+}
+
+

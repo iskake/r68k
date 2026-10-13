@@ -13,7 +13,8 @@ fn main() {
     cpu.write_mem_short_internal(0x0000_000c, 0x0000_0002);
     cpu.write_mem_short_internal(0x0000_000e, 0b0011_011_001_101_001);  // movea.w a3,0(a1)
     cpu.write_mem_short_internal(0x0000_0012, 0b0000_000_101_001_001);  // movep.l (0,a1),d0
-    // cpu.write_mem_short_internal(0x0000_000a, 0b0100_011_001_001_001);
+    cpu.write_mem_short_internal(0x0000_0016, 0b0010_001_111_111_001);  // move.l (0x00).l,(0x00).l
+    cpu.write_mem_short_internal(0x0000_0020, 0b0100_101_011_111_100);  // illegal
 
     println!("created cpu");
     cpu.print_state();
