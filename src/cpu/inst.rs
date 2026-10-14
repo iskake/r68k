@@ -1,6 +1,27 @@
 use std::fmt::Display;
 
-use crate::{bits::{DataSize, is_negative, is_zero, sign_extend, sign_extend_byte}, cpu::{CPU, RegisterNum}};
+use crate::{bits::{DataSize, is_negative, is_zero, sign_extend, sign_extend_byte}, cpu::{CPU, CPURevision, RegisterNum}};
+
+const VECTOR_SIZE: u32 = 4;
+
+const VECTOR_NUM_RESET_SP: u32            = 0;
+const VECTOR_NUM_RESET_PC: u32            = 1;
+const VECTOR_NUM_ACCESS_FAULT: u32        = 2;
+const VECTOR_NUM_ADDRESS_ERROR: u32       = 3;
+
+const VECTOR_NUM_ILLEGAL_INSTRUCTION: u32 = 4;
+const VECTOR_NUM_INT_DIV_BY_ZERO: u32     = 5;
+const VECTOR_NUM_CHK_INSTRUCTION: u32     = 6;
+const VECTOR_NUM_TRAPV: u32               = 7;
+
+const VECTOR_NUM_PRIVELEGE_VIOLATION: u32 = 8;
+const VECTOR_NUM_TRACE: u32               = 9;
+const VECTOR_NUM_LINE_1010: u32           = 10;
+const VECTOR_NUM_LINE_1111: u32           = 11;
+
+const VECTOR_NUM_COPROCESSOR_PROTOCOL_VIOLATION: u32 = 13;
+const VECTOR_NUM_FORMAT_ERROR: u32            = 13;
+const VECTOR_NUM_UNINITIALIZED_INTERRUPT: u32 = 13;
 
 enum DataType {
     Immediate,
@@ -220,13 +241,17 @@ impl Display for Instruction {
             EORI  { op } => todo!(),
             CMPI  { op } => todo!(),
             BTST  { op } => todo!(),
+
+            // moves
             MOVEP { op } => {
-                let s = get_op_size_bit9(*op);
+                let s = get_op_size_bit6(*op);
                 let an = get_op_xn_lo(*op);
                 let dn = get_op_xn_hi(*op);
                 if get_op_m_hi(*op) & 0b010 != 0 {
+                    // reg -> mem
                     write!(f, "movep{} d{},(d,a{})", s, dn, an)
                 } else {
+                    // mem -> reg
                     write!(f, "movep{} (d,a{}),d{}", s, an, dn)
                 }
             },
@@ -237,7 +262,7 @@ impl Display for Instruction {
 
                 let xn = get_op_xn_hi(*op);
 
-                write!(f, "movea{} a{},{}", s, xn, am_src)
+                write!(f, "movea{} a{},{}", s, am_src, xn)
             },
             MOVE  { op } => {
                 let s = get_op_size_move(*op);
@@ -250,7 +275,20 @@ impl Display for Instruction {
 
                 write!(f, "move{} {},{}", s, am_src, am_dst)
             },
+            MOVEM { op } => {
+                let s = get_op_size_bit6(*op);
+                let am = AddressingMode::decode_op(*op);
+                if op & 0x400 != 0 {
+                    // mem -> reg
+                    write!(f, "movem{} {},list", s, am)
+                } else {
+                    // reg -> mem
+                    write!(f, "movem{} list,{}", s, am)
+                }
+            },
+            MOVEQ { op } => write!(f, "moveq #${:02x}", op & 0xff),
             MOVEToFrom { op } => todo!(),
+
             NEGX  { op } => todo!(),
             CLR   { op } => todo!(),
             NEG   { op } => todo!(),
@@ -275,7 +313,6 @@ impl Display for Instruction {
             RTR                => write!(f, "rtr"),
             JSR   { op } => todo!(),
             JMP   { op } => todo!(),
-            MOVEM { op } => todo!(),
             LEA   { op } => todo!(),
             CHK   { op } => todo!(),
             ADDQ  { op } => todo!(),
@@ -285,7 +322,6 @@ impl Display for Instruction {
             BRA   { op } => todo!(),
             BSR   { op } => todo!(),
             Bcc   { op } => todo!(),
-            MOVEQ { op } => write!(f, "moveq #${:02x}", op & 0xff),
             DIVU  { op } => todo!(),
             DIVS  { op } => todo!(),
             SBCD  { op } => todo!(),
@@ -317,6 +353,22 @@ impl Display for Instruction {
 impl Instruction {
     pub(crate) fn run(self, cpu: &mut CPU) {
         match self {
+            // move
+            Instruction::MOVEP { op } => movep(op, cpu),
+            Instruction::MOVEA { op } => move_(op, cpu),
+            Instruction::MOVE  { op } => move_(op, cpu),
+            Instruction::MOVEToFrom { op } => move_from_to(op, cpu),
+            Instruction::MOVEQ { op } => moveq(op, cpu),
+            Instruction::MOVEM { op } => movem(op, cpu),
+            Instruction::MOVEUSP { op } => todo!(),
+            // exceptions, etc.
+            Instruction::TRAP  { op } => trap(op, cpu),
+            Instruction::TRAPV => trapv(cpu),
+            Instruction::ILLEGAL => todo!(),
+            Instruction::RESET => todo!(),
+            Instruction::STOP  => todo!(),
+
+            // [Unsorted]
             Instruction::ORI   { op } => todo!(),
             Instruction::ANDI  { op } => todo!(),
             Instruction::SUBI  { op } => todo!(),
@@ -324,10 +376,7 @@ impl Instruction {
             Instruction::EORI  { op } => todo!(),
             Instruction::CMPI  { op } => todo!(),
             Instruction::BTST  { op } => todo!(),
-            Instruction::MOVEP { op } => movep(op, cpu),
-            Instruction::MOVEA { op } => move_(op, cpu),
-            Instruction::MOVE  { op } => move_(op, cpu),
-            Instruction::MOVEToFrom { op } => todo!(),
+
             Instruction::NEGX  { op } => todo!(),
             Instruction::CLR   { op } => todo!(),
             Instruction::NEG   { op } => todo!(),
@@ -336,23 +385,17 @@ impl Instruction {
             Instruction::NBCD  { op } => todo!(),
             Instruction::SWAP  { op } => todo!(),
             Instruction::PEA   { op } => todo!(),
-            Instruction::ILLEGAL => todo!(),
             Instruction::TAS   { op } => todo!(),
             Instruction::TST   { op } => todo!(),
-            Instruction::TRAP  { op } => todo!(),
+
             Instruction::LINK  { op } => todo!(),
             Instruction::UNLK  { op } => todo!(),
-            Instruction::MOVEUSP { op } => todo!(),
-            Instruction::RESET => todo!(),
             Instruction::NOP   => {},   // TODO: "does not begin execution until all pending bus cycles have completed."
-            Instruction::STOP  => todo!(),
             Instruction::RTE   => todo!(),
             Instruction::RTS   => todo!(),
-            Instruction::TRAPV => todo!(),
             Instruction::RTR   => todo!(),
             Instruction::JSR   { op } => todo!(),
             Instruction::JMP   { op } => todo!(),
-            Instruction::MOVEM { op } => todo!(),
             Instruction::LEA   { op } => todo!(),
             Instruction::CHK   { op } => todo!(),
             Instruction::ADDQ  { op } => todo!(),
@@ -362,7 +405,6 @@ impl Instruction {
             Instruction::BRA   { op } => todo!(),
             Instruction::BSR   { op } => todo!(),
             Instruction::Bcc   { op } => todo!(),
-            Instruction::MOVEQ { op } => moveq(op, cpu),
             Instruction::DIVU  { op } => todo!(),
             Instruction::DIVS  { op } => todo!(),
             Instruction::SBCD  { op } => todo!(),
@@ -421,7 +463,13 @@ fn get_op_size(op: u16) -> DataSize {
     (((op & 0b11_000_000) >> 6) as u8).into()
 }
 
-fn get_op_size_bit9(op: u16) -> DataSize {
+fn get_op_size_bit6(op: u16) -> DataSize {
+    // 0 -> 01 (.w)
+    // 1 -> 10 (.l)
+    (((op & 0b1_000_000) >> 6) as u8 + 1).into()
+}
+
+fn get_op_size_bit8(op: u16) -> DataSize {
     // 0 -> 01 (.w)
     // 1 -> 10 (.l)
     (((op & 0b1_000_000_000) >> 8) as u8 + 1).into()
@@ -754,6 +802,30 @@ fn decode_opcode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u
  *                              *
  ********************************/
 
+/// Performs an assertion on whether the specified addressing mode
+/// complies with the given addressing mode validity mask.
+// TODO: validate addressing mode during opcode decoding instead of panicing at "runtime"
+fn assert_valid_am(am: AddressingMode, mask: u32) {
+    let valid = match am {
+        AddressingMode::DataReg(_)      => (mask & 0b100000000000) != 0,
+        AddressingMode::AddrReg(_)      => (mask & 0b010000000000) != 0,
+        AddressingMode::Addr(_)         => (mask & 0b001000000000) != 0,
+        AddressingMode::AddrPostInc(_)  => (mask & 0b000100000000) != 0,
+        AddressingMode::AddrPreDec(_)   => (mask & 0b000010000000) != 0,
+        AddressingMode::AddrDisplace(_) => (mask & 0b000001000000) != 0,
+        AddressingMode::AddrIdx(_)      => (mask & 0b000000100000) != 0,
+        AddressingMode::AbsShort        => (mask & 0b000000010000) != 0,
+        AddressingMode::AbsLong         => (mask & 0b000000001000) != 0,
+        AddressingMode::Imm             => (mask & 0b000000000100) != 0,
+        AddressingMode::PCDisplace      => (mask & 0b000000000010) != 0,
+        AddressingMode::PCIdx           => (mask & 0b000000000001) != 0,
+        AddressingMode::Invalid         => false,
+    };
+
+    assert!(valid, "Invalid addressing mode {am}");
+}
+
+
 fn move_(op: u16, cpu: &mut CPU) {
     let s = get_op_size_move(op);
     let am_src = AddressingMode::decode_op(op);
@@ -782,6 +854,71 @@ fn moveq(op: u16, cpu: &mut CPU) {
     cpu.reg.sr.clear_c();
 }
 
+fn movem(op: u16, cpu: &mut CPU) {
+    let size = get_op_size_bit6(op);
+    let am = AddressingMode::decode_op(op);
+    let direction_from_mem = op & 0x0400 != 0;
+
+    match am {
+        AddressingMode::AddrPostInc(_) if !direction_from_mem => {
+            panic!("Postincrement for movem can only be used for mem -> reg operations")
+        },
+        AddressingMode::AddrPreDec(_) if direction_from_mem => {
+            panic!("Predecrement for movem can only be used for reg -> mem operations")
+        },
+        AddressingMode::DataReg(_)
+        | AddressingMode::AddrReg(_)
+        | AddressingMode::Imm
+        | AddressingMode::Invalid => panic!("Invalid addressing mode for movem: {am}"),
+        _ => {}
+    }
+
+    let list_mask = cpu.read_pc_inc_short();    // +4(1/0)
+    let n = list_mask.count_ones();
+    let (reversed, list_ptr, list_ptr_mod) = if let AddressingMode::AddrPreDec(_) = am {
+        (true, 16, -1)
+    } else {
+        (false, 0, 1)
+    };
+
+    if direction_from_mem {
+        // mem -> reg
+        for i in 0..16 {
+            if list_mask & (1 << i) != 0 {
+                let w = match am {
+                    AddressingMode::AddrPostInc(an) => {
+                        cpu.read_am(size, am);
+                        todo!();
+                    }
+                    _ => {
+                        cpu.read_am(size, am);
+                        todo!();
+                    }
+                };
+                let val = if let DataSize::Word = size {
+                    sign_extend(DataSize::Long, w)
+                } else {
+                    w
+                };
+
+                let reg_num = (if reversed {7 - i & 0b111} else {i & 0b111}).into();
+                let addr_reg = if reversed { i & 0b1000 == 0 } else { i & 0b1000 != 0};
+
+                if addr_reg {
+                    // An
+                    cpu.reg.write_address(reg_num, size, val);
+                } else {
+                    // Dn
+                    cpu.reg.write_data(reg_num, size, val);
+                }
+            }
+        }
+    } else {
+        // reg -> mem
+        todo!();
+    }
+}
+
 fn movep(op: u16, cpu: &mut CPU) {
     let displacement = cpu.read_pc_inc_short();
 
@@ -790,7 +927,7 @@ fn movep(op: u16, cpu: &mut CPU) {
 
     let m_hi = get_op_m_hi(op);
     let direction = m_hi & 0b010 != 0;
-    let size = get_op_size_bit9(op);
+    let size = get_op_size_bit6(op);
 
     // TODO: check if this is correct
     if direction {
@@ -836,9 +973,55 @@ fn movep(op: u16, cpu: &mut CPU) {
     }
 }
 
+fn move_from_to(op: u16, cpu: &mut CPU) {
+    let variation = match (op & 0x0700) >> 8 {
+        0b000 => VariationCCRSR::Normal, // from sr
+        0b100 => VariationCCRSR::ToCCR,
+        0b110 => VariationCCRSR::ToSR,
+        _ => unreachable!()
+    };
+
+    let am = AddressingMode::decode_op(op);
+
+    match variation {
+        VariationCCRSR::Normal => {
+            // move from sr
+            assert_valid_am(am, 0b101111111000);
+
+            let is_m68000 = if let CPURevision::M68000 = cpu.revision {true} else {false};
+
+            if is_m68000 || cpu.reg.sr.supervisor_state() {
+                let val = cpu.reg.sr.sr();
+                cpu.write_am(DataSize::Word, am, val as u32);
+            } else {
+                // trap
+                trap_vec(VECTOR_NUM_PRIVELEGE_VIOLATION, cpu);
+            }
+        },
+        VariationCCRSR::ToCCR => {
+            assert_valid_am(am, 0b101111111111);
+
+            let val = cpu.read_am(DataSize::Word, am);
+            cpu.reg.sr.modify_ccr(val as u16);
+        },
+        VariationCCRSR::ToSR => {
+            assert_valid_am(am, 0b101111111111);
+
+            let val = cpu.read_am(DataSize::Word, am);
+            if cpu.reg.sr.supervisor_state() {
+                cpu.reg.sr.modify_sr(val as u16);
+            } else {
+                // trap
+                trap_vec(VECTOR_NUM_PRIVELEGE_VIOLATION, cpu);
+            }
+        },
+    };
+}
+
 fn not(op: u16, cpu: &mut CPU) {
     let s = get_op_size(op);
     let am = AddressingMode::decode_op(op);
+    assert_valid_am(am, 0b1011111_11000);
 
     let res = !cpu.read_am(s, am);
     cpu.cycle_when_long(s, 1);
@@ -851,4 +1034,63 @@ fn not(op: u16, cpu: &mut CPU) {
     cpu.reg.sr.clear_c();
 }
 
+/// Cycles: 30(3/3)
+fn trap_vec(vector_num: u32, cpu: &mut CPU) {
+    // "Equivalent to:"
+    // Format + Offset word -> (SSP)
+    // ?                                                          // +4(0/1) => 4(0/1)
+    todo!("Format + Offset word -> SSP");
+    // SSP - 2 -> SSP
+    cpu.reg.ssp -= 2;
+    cpu.cycle(2);   // ?
 
+    // PC -> (SSP)
+    cpu.write_mem_long(cpu.reg.ssp, cpu.reg.pc);        // +8(0/2) => ??(1/2)
+
+    // SSP - 4 -> SSP
+    cpu.reg.ssp -= 4;
+    cpu.cycle(2);   // ?
+
+    // SR -> (SSP)
+    cpu.write_mem_short(cpu.reg.ssp, cpu.reg.sr.sr());  // +4(0/1) => ??(1/3)
+
+    // SSP - 2 -> SSP
+    cpu.reg.ssp -= 2;
+    cpu.cycle(2);   // ?
+
+    // (Vector) -> PC
+    cpu.reg.pc = cpu.read_mem_long(vector_num * VECTOR_SIZE);// +8(2/0) => 30(3/3)  (r/w => 24)
+}
+
+fn trapv(cpu: &mut CPU) {
+    if cpu.reg.sr.v() {
+        trap_vec(VECTOR_NUM_TRAPV, cpu);   // +30(3/3) => 34(4/3)
+    }
+}
+
+fn trap(op: u16, cpu: &mut CPU) {
+    let v = (op & 0xf) as u32;
+
+    // 1 -> S-bit of SR
+    cpu.reg.sr.set_supervisor();
+
+    let is_m68000 = if let CPURevision::M68000 = cpu.revision {true} else {false};
+    if !is_m68000 {
+        // "The MC68000 and MC68008 do not write vector offset or
+        // format code to the system stack"
+        // SSP - 2 -> SSP
+        // Format/Offset -> (SSP)
+    }
+
+    // SSP-4 -> SSP
+    cpu.reg.ssp -= 4;
+    // PC -> (SSP)
+    cpu.write_mem_long(cpu.reg.ssp, cpu.reg.pc);    // +8(0/2)
+    // SSP - 2 -> SSP
+    cpu.reg.ssp -= 2;
+    // SR -> (SSP)
+    cpu.write_mem_short(cpu.reg.ssp, cpu.reg.sr.sr()); // +4(0/1)
+    // Vector Address -> PC
+    let vector_addr = v * VECTOR_SIZE + 32 * VECTOR_SIZE;
+    cpu.reg.pc = vector_addr as u32;
+}

@@ -58,12 +58,56 @@ impl StatusRegister {
         }
     }
 
-    fn hi(&self) -> u8 {
+    fn supervisor_state(&self) -> bool {
+        self.val & 0b00100000_00000000 != 0
+    }
+
+    fn set_supervisor(&mut self) {
+        self.val |= 0b00100000_00000000
+    }
+
+    fn clear_supervisor(&mut self) {
+        self.val &= 0b11011111_11111111
+    }
+
+    fn sr(&self) -> u16 {
+        self.val
+    }
+
+    fn sr_hi(&self) -> u8 {
         ((self.val & 0xff00) >> 8) as u8
     }
 
     fn ccr(&self) -> u8 {
         (self.val & 0xff) as u8
+    }
+
+    fn modify_sr(&mut self, val: u16) {
+        self.val = val
+    }
+
+    fn modify_ccr(&mut self, val: u16) {
+        self.val = (self.val & 0xff00) | (val & 0xff)
+    }
+
+    fn x(&self) -> bool {
+        self.val & 0b10000 != 0
+    }
+
+    fn n(&self) -> bool {
+        self.val & 0b01000 != 0
+    }
+
+    fn z(&self) -> bool {
+        self.val & 0b00100 != 0
+    }
+
+    fn v(&self) -> bool {
+        self.val & 0b00010 != 0
+    }
+
+    fn c(&self) -> bool {
+        self.val & 0b00001 != 0
     }
 
     fn modify_x(&mut self, cond: bool) {
@@ -298,7 +342,7 @@ pub struct CPU {
     cycles: usize,
     read_cycles: usize,
     write_cycles: usize,
-    revision: CPURevision,
+    pub revision: CPURevision,
 }
 
 impl CPU {
@@ -351,7 +395,7 @@ impl CPU {
             self.reg.usp,
             self.reg.ssp,
         );
-        println!("  sr hi: {:08b} ccr: {:08b}", self.reg.sr.hi(), self.reg.sr.ccr());
+        println!("  sr hi: {:08b} ccr: {:08b}", self.reg.sr.sr_hi(), self.reg.sr.ccr());
         println!("  pc: {:08x}, cycles: {}", self.reg.pc, self.cycles);
     }
 
