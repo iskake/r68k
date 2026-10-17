@@ -4,24 +4,59 @@ use crate::{bits::{DataSize, is_negative, is_zero, sign_extend, sign_extend_byte
 
 const VECTOR_SIZE: u32 = 4;
 
-const VECTOR_NUM_RESET_SP: u32            = 0;
-const VECTOR_NUM_RESET_PC: u32            = 1;
-const VECTOR_NUM_ACCESS_FAULT: u32        = 2;
-const VECTOR_NUM_ADDRESS_ERROR: u32       = 3;
+enum CPUVector {
+    ResetSP            = 0,
+    ResetPC            = 1,
+    AccessFault        = 2,
+    AddressError       = 3,
 
-const VECTOR_NUM_ILLEGAL_INSTRUCTION: u32 = 4;
-const VECTOR_NUM_INT_DIV_BY_ZERO: u32     = 5;
-const VECTOR_NUM_CHK_INSTRUCTION: u32     = 6;
-const VECTOR_NUM_TRAPV: u32               = 7;
+    IllegalInstruction = 4,
+    IntDivByZero       = 5,
+    ChkInstruction     = 6,
+    TRAPV              = 7,
 
-const VECTOR_NUM_PRIVELEGE_VIOLATION: u32 = 8;
-const VECTOR_NUM_TRACE: u32               = 9;
-const VECTOR_NUM_LINE_1010: u32           = 10;
-const VECTOR_NUM_LINE_1111: u32           = 11;
+    PrivelegeViolation = 8,
+    TRACE              = 9,
+    Line1010Emulator   = 10,
+    Line1111Emulator   = 11,
 
-const VECTOR_NUM_COPROCESSOR_PROTOCOL_VIOLATION: u32 = 13;
-const VECTOR_NUM_FORMAT_ERROR: u32            = 13;
-const VECTOR_NUM_UNINITIALIZED_INTERRUPT: u32 = 13;
+    // [unassigned #12]
+    CoprocessorProtocolViolation = 13,
+    FormatError            = 14,
+    UninitializedInterrupt = 15,
+
+    // [Unassigned #16-#23]
+
+    SupriousInterrupt  = 24,
+    // Level1InterruptAutovector = 25,
+    // Level2InterruptAutovector = 26,
+    // Level3InterruptAutovector = 27,
+
+    // Level4InterruptAutovector = 28,
+    // Level5InterruptAutovector = 29,
+    // Level6InterruptAutovector = 30,
+    // Level7InterruptAutovector = 31,
+
+    // [TRAP 0-15 (#32-#47)]
+
+    FPBranchOrSet = 48,
+    FPInexactResult = 49,
+    FPDivByDero = 50,
+    FPUnderflow = 51,
+
+    FPOperandError = 52,
+    FPOverflow = 53,
+    FPSignalingNaN = 54,
+    FPUnimplementedDataType = 55,
+
+    MMUConfigError = 56,
+    MMUIllegalOpError = 57,
+    MMUAccessLevelViolationError = 58,
+
+    // [Unassigned #59-#63]
+
+    // [User defined #64-#255]
+}
 
 enum DataType {
     Immediate,
@@ -995,7 +1030,7 @@ fn move_from_to(op: u16, cpu: &mut CPU) {
                 cpu.write_am(DataSize::Word, am, val as u32);
             } else {
                 // trap
-                trap_vec(VECTOR_NUM_PRIVELEGE_VIOLATION, cpu);
+                trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
             }
         },
         VariationCCRSR::ToCCR => {
@@ -1012,7 +1047,7 @@ fn move_from_to(op: u16, cpu: &mut CPU) {
                 cpu.reg.sr.modify_sr(val as u16);
             } else {
                 // trap
-                trap_vec(VECTOR_NUM_PRIVELEGE_VIOLATION, cpu);
+                trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
             }
         },
     };
@@ -1035,7 +1070,7 @@ fn not(op: u16, cpu: &mut CPU) {
 }
 
 /// Cycles: 30(3/3)
-fn trap_vec(vector_num: u32, cpu: &mut CPU) {
+fn trap_vec(vector_num: u8, cpu: &mut CPU) {
     // "Equivalent to:"
     // Format + Offset word -> (SSP)
     // ?                                                          // +4(0/1) => 4(0/1)
@@ -1059,12 +1094,12 @@ fn trap_vec(vector_num: u32, cpu: &mut CPU) {
     cpu.cycle(2);   // ?
 
     // (Vector) -> PC
-    cpu.reg.pc = cpu.read_mem_long(vector_num * VECTOR_SIZE);// +8(2/0) => 30(3/3)  (r/w => 24)
+    cpu.reg.pc = cpu.read_mem_long(vector_num as u32 * VECTOR_SIZE);// +8(2/0) => 30(3/3)  (r/w => 24)
 }
 
 fn trapv(cpu: &mut CPU) {
     if cpu.reg.sr.v() {
-        trap_vec(VECTOR_NUM_TRAPV, cpu);   // +30(3/3) => 34(4/3)
+        trap_vec(CPUVector::TRAPV as u8, cpu);   // +30(3/3) => 34(4/3)
     }
 }
 
