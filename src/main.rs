@@ -1,24 +1,44 @@
+use std::{env::args, path::PathBuf};
+
+use elf::{ElfBytes, endian::AnyEndian};
 use r68k::cpu::*;
 
 fn main() {
     let mut cpu = CPU::new(CPURevision::M68000);
 
-    // Temp. test code just to check that it works at all...!
-    cpu.write_mem_short_internal(0x0000_0000, 0b0100_011_010_000_000);  // not.l d0 (d0 -> ffffffff)
-    cpu.write_mem_short_internal(0x0000_0002, 0b0010_000_001_111_100);  // movea.l a0,#00001001
-    cpu.write_mem_long_internal(0x0000_0004, 0x0000_1001);
-    cpu.write_mem_short_internal(0x0000_0008, 0b0010_001_001_100_000);  // movea.l a1,-(a0)
-    cpu.write_mem_long_internal(0x0000_0ffd, 0x0000_0002);
-    cpu.write_mem_short_internal(0x0000_000a, 0b0010_011_001_101_001);  // movea.l a3,2(a1)
-    cpu.write_mem_short_internal(0x0000_000c, 0x0000_0002);
-    cpu.write_mem_short_internal(0x0000_000e, 0b0011_011_001_101_001);  // movea.w a3,0(a1)
-    cpu.write_mem_short_internal(0x0000_0012, 0b0000_000_101_001_001);  // movep.l (0,a1),d0
-    cpu.write_mem_short_internal(0x0000_0016, 0b0010_001_111_111_001);  // move.l (0x00).l,(0x00).l
-    cpu.write_mem_short_internal(0x0000_0020, 0b0100_101_011_111_100);  // illegal
+    let args: Vec<String> = args().collect();
+
+    if args.len() < 2 {
+        println!("need an elf32-m68k object file to load")
+    }
+
+    tmp_load_program(&args[1], &mut cpu);
 
     println!("created cpu");
     cpu.print_state();
     loop {
         cpu.run();
+    }
+}
+
+/// Temporary function to load the data stored at the `.text` section of 
+/// an elf32-m68k object file (directly) into the internal memory of the m68k cpu
+fn tmp_load_program(obj_file_path_str: &str, cpu: &mut CPU) {
+    let path = PathBuf::from(obj_file_path_str);
+    let data = std::fs::read(path).unwrap();
+    let slice = data.as_slice();
+    let file = ElfBytes::<AnyEndian>::minimal_parse(slice).unwrap();
+
+    let text_header = file
+        .section_header_by_name(".text")
+        .expect("section table header could not be parsed")
+        .expect("no .text header found");
+
+    let (text, _) = file
+        .section_data(&text_header)
+        .expect("section header does not exist");
+
+    for (i, b) in text.iter().enumerate() {
+        cpu.write_mem_byte_internal(i as u32, *b);
     }
 }

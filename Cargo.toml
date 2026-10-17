@@ -7,3 +7,4 @@ edition = "2024"
 overflow-checks = false
 
 [dependencies]
+elf = "0.8.0"
