@@ -414,7 +414,7 @@ impl CPU {
 
         CPU {
             reg: Registers::new(),
-            mmu: MMU::new(0x10000),
+            mmu: MMU::new(0x1000000),
             cycles: 0,
             read_cycles: 0,
             write_cycles: 0,
