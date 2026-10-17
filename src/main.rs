@@ -15,6 +15,7 @@ fn main() {
     tmp_load_program(&args[1], &mut cpu);
 
     println!("created cpu");
+    cpu.init();
     cpu.print_state();
     loop {
         cpu.run();

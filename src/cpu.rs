@@ -2,6 +2,62 @@ use crate::{bits::{DataSize, SIZE_MASK_LOWER, SIZE_MASK_UPPER, sign_extend, sign
 
 mod inst;
 
+const CPU_VECTOR_SIZE: u32 = 4;
+
+pub enum CPUVector {
+    ResetSP            = 0,
+    ResetPC            = 1,
+    AccessFault        = 2,
+    AddressError       = 3,
+
+    IllegalInstruction = 4,
+    IntDivByZero       = 5,
+    ChkInstruction     = 6,
+    TRAPV              = 7,
+
+    PrivelegeViolation = 8,
+    TRACE              = 9,
+    Line1010Emulator   = 10,
+    Line1111Emulator   = 11,
+
+    // [Unassigned #12]
+    CoprocessorProtocolViolation = 13,
+    FormatError            = 14,
+    UninitializedInterrupt = 15,
+
+    // [Unassigned #16-#23]
+
+    SpuriousInterrupt  = 24,
+    InterruptAutovectorLevel1 = 25,
+    InterruptAutovectorLevel2 = 26,
+    InterruptAutovectorLevel3 = 27,
+    InterruptAutovectorLevel4 = 28,
+    InterruptAutovectorLevel5 = 29,
+    InterruptAutovectorLevel6 = 30,
+    InterruptAutovectorLevel7 = 31,
+
+    // [TRAP 0-15 (#32-#47)]
+
+    FPBranchOrSet = 48,
+    FPInexactResult = 49,
+    FPDivByDero = 50,
+    FPUnderflow = 51,
+
+    FPOperandError = 52,
+    FPOverflow = 53,
+    FPSignalingNaN = 54,
+    FPUnimplementedDataType = 55,
+
+    MMUConfigError = 56,
+    MMUIllegalOpError = 57,
+    MMUAccessLevelViolationError = 58,
+
+    // [Unassigned #59-#63]
+
+    // [User defined #64-#255]
+}
+
+
 #[derive(Debug, Clone, Copy)]
 enum RegisterNum {
     R0,
@@ -367,7 +423,19 @@ impl CPU {
     }
 
     pub fn cpu_name(&self) -> String {
-        String::from("")
+        match self.revision {
+            CPURevision::M68000 => String::from("MC68000"),
+            CPURevision::M68010 => String::from("MC68010"),
+            CPURevision::M68020 => String::from("MC68020"),
+            CPURevision::M68030 => String::from("MC68030"),
+            CPURevision::M68040 => String::from("MC68040"),
+            CPURevision::M68060 => String::from("MC68060"),
+        }
+    }
+
+    pub fn init(&mut self) {
+        self.reg.usp = self.read_mem_long(CPUVector::ResetSP as u32 * CPU_VECTOR_SIZE);
+        self.reg.pc = self.read_mem_long(CPUVector::ResetPC as u32 * CPU_VECTOR_SIZE);
     }
 
     pub fn print_state(&self) {
@@ -433,7 +501,7 @@ impl CPU {
         let val_hi = ((val & 0xffff_0000) >> 16) as u16;
         let val_lo = (val & 0x0000_ffff) as u16;
         self.write_mem_short(addr, val_hi);
-        self.write_mem_short(addr, val_lo);
+        self.write_mem_short(addr+2, val_lo);
     }
 
     /// Write a byte/word/long (based on the `size`) to address `addr`
@@ -710,6 +778,89 @@ impl CPU {
             _ => self.write_mem_size(size, addr, val)
         }
     }
+
+
+    /// Push an element on top of the (user) stack.
+    /// Decreases the user stack pointer (a7 / usp) by 2.
+    /// 
+    /// Cycles: 4(0/1)
+    pub fn push_usp_short(&mut self, val: u16) {
+        self.reg.usp -= 2;
+        self.write_mem_short(self.reg.usp, val)
+    }
+
+    /// Push an element on top of the (user) stack.
+    /// Decreases the user stack pointer (a7 / usp) by 4.
+    /// 
+    /// Cycles: 8(0/2)
+    pub fn push_usp_long(&mut self, val: u32) {
+        self.reg.usp -= 4;
+        self.write_mem_long(self.reg.usp, val)
+    }
+
+    /// Pop an element from the top of the (user) stack.
+    /// Increases the user stack pointer (a7 / usp) by 4.
+    /// 
+    /// Cycles: 4(2/0)
+    pub fn pop_usp_short(&mut self) -> u16 {
+        let res = self.read_mem_short(self.reg.usp);
+        self.reg.usp += 2;
+        res
+    }
+
+    /// Pop an element from the top of the (user) stack.
+    /// Increases the user stack pointer (a7 / usp) by 4.
+    /// 
+    /// ```
+    /// (SP) -> val;
+    /// SP + 4 -> SP
+    /// ```
+    /// 
+    /// Cycles: 8(2/0)
+    pub fn pop_usp_long(&mut self) -> u32 {
+        let res = self.read_mem_long(self.reg.usp);
+        self.reg.usp += 4;
+        res
+    }
+
+    /// Push an element on top of the (supervisor) stack.
+    /// Decreases the supervisor stack pointer (ssp) by 2.
+    /// 
+    /// Cycles: 4(0/1)
+    pub fn push_ssp_short(&mut self, val: u16) {
+        self.reg.ssp -= 2;
+        self.write_mem_short(self.reg.ssp, val)
+    }
+
+    /// Push an element on top of the (supervisor) stack.
+    /// Decreases the supervisor stack pointer (ssp) by 4.
+    /// 
+    /// Cycles: 8(0/2)
+    pub fn push_ssp_long(&mut self, val: u32) {
+        self.reg.ssp -= 4;
+        self.write_mem_long(self.reg.ssp, val)
+    }
+
+    /// Pop an element from the top of the (supervisor) stack.
+    /// Increases the supervisor stack pointer (ssp) by 2.
+    /// 
+    /// Cycles: 4(2/0)
+    pub fn pop_ssp_short(&mut self) -> u16 {
+        let res = self.read_mem_short(self.reg.ssp);
+        self.reg.ssp += 2;
+        res
+    }
+
+    /// Pop an element from the top of the (supervisor) stack.
+    /// Increases the supervisor stack pointer (ssp) by 2.
+    /// 
+    /// Cycles: 8(2/0)
+    pub fn pop_ssp_long(&mut self) -> u32 {
+        let res = self.read_mem_long(self.reg.ssp);
+        self.reg.ssp += 4;
+        res
+    }
+
 
     /// Cycles: 4(1/0)
     pub fn read_pc_inc_short(&mut self) -> u16 {

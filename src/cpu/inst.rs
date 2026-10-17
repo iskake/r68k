@@ -1,62 +1,6 @@
 use std::fmt::Display;
 
-use crate::{bits::{DataSize, is_negative, is_zero, sign_extend, sign_extend_byte}, cpu::{CPU, CPURevision, RegisterNum}};
-
-const VECTOR_SIZE: u32 = 4;
-
-enum CPUVector {
-    ResetSP            = 0,
-    ResetPC            = 1,
-    AccessFault        = 2,
-    AddressError       = 3,
-
-    IllegalInstruction = 4,
-    IntDivByZero       = 5,
-    ChkInstruction     = 6,
-    TRAPV              = 7,
-
-    PrivelegeViolation = 8,
-    TRACE              = 9,
-    Line1010Emulator   = 10,
-    Line1111Emulator   = 11,
-
-    // [unassigned #12]
-    CoprocessorProtocolViolation = 13,
-    FormatError            = 14,
-    UninitializedInterrupt = 15,
-
-    // [Unassigned #16-#23]
-
-    SupriousInterrupt  = 24,
-    // Level1InterruptAutovector = 25,
-    // Level2InterruptAutovector = 26,
-    // Level3InterruptAutovector = 27,
-
-    // Level4InterruptAutovector = 28,
-    // Level5InterruptAutovector = 29,
-    // Level6InterruptAutovector = 30,
-    // Level7InterruptAutovector = 31,
-
-    // [TRAP 0-15 (#32-#47)]
-
-    FPBranchOrSet = 48,
-    FPInexactResult = 49,
-    FPDivByDero = 50,
-    FPUnderflow = 51,
-
-    FPOperandError = 52,
-    FPOverflow = 53,
-    FPSignalingNaN = 54,
-    FPUnimplementedDataType = 55,
-
-    MMUConfigError = 56,
-    MMUIllegalOpError = 57,
-    MMUAccessLevelViolationError = 58,
-
-    // [Unassigned #59-#63]
-
-    // [User defined #64-#255]
-}
+use crate::{bits::{DataSize, is_negative, is_zero, sign_extend, sign_extend_byte}, cpu::{CPU, CPURevision, CPUVector, RegisterNum, CPU_VECTOR_SIZE}};
 
 enum DataType {
     Immediate,
@@ -175,6 +119,12 @@ impl VariationCCRSR {
             _ => VariationCCRSR::Normal,
         }
     }
+}
+
+enum ReturnOp {
+    Exception,
+    Subroutine,
+    AndRestoreCCR,
 }
 
 #[derive(Debug)]
@@ -346,8 +296,8 @@ impl Display for Instruction {
             RTS                => write!(f, "rts"),
             TRAPV              => write!(f, "trapv"),
             RTR                => write!(f, "rtr"),
-            JSR   { op } => todo!(),
-            JMP   { op } => todo!(),
+            JSR   { op } => write!(f, "jsr {}", AddressingMode::decode_op(*op)),
+            JMP   { op } => write!(f, "jmp {}", AddressingMode::decode_op(*op)),
             LEA   { op } => todo!(),
             CHK   { op } => todo!(),
             ADDQ  { op } => todo!(),
@@ -422,15 +372,17 @@ impl Instruction {
             Instruction::PEA   { op } => todo!(),
             Instruction::TAS   { op } => todo!(),
             Instruction::TST   { op } => todo!(),
+            // jumps
+            Instruction::JSR   { op } => jmp(op, cpu),
+            Instruction::JMP   { op } => jmp(op, cpu),
+            // returns
+            Instruction::RTE   => rts(ReturnOp::Exception, cpu),
+            Instruction::RTS   => rts(ReturnOp::Subroutine, cpu),
+            Instruction::RTR   => rts(ReturnOp::AndRestoreCCR, cpu),
 
             Instruction::LINK  { op } => todo!(),
             Instruction::UNLK  { op } => todo!(),
             Instruction::NOP   => {},   // TODO: "does not begin execution until all pending bus cycles have completed."
-            Instruction::RTE   => todo!(),
-            Instruction::RTS   => todo!(),
-            Instruction::RTR   => todo!(),
-            Instruction::JSR   { op } => todo!(),
-            Instruction::JMP   { op } => todo!(),
             Instruction::LEA   { op } => todo!(),
             Instruction::CHK   { op } => todo!(),
             Instruction::ADDQ  { op } => todo!(),
@@ -1071,35 +1023,28 @@ fn not(op: u16, cpu: &mut CPU) {
 
 /// Cycles: 30(3/3)
 fn trap_vec(vector_num: u8, cpu: &mut CPU) {
-    // "Equivalent to:"
-    // Format + Offset word -> (SSP)
-    // ?                                                          // +4(0/1) => 4(0/1)
-    todo!("Format + Offset word -> SSP");
+    // Format + Offset word -> (SSP) 
     // SSP - 2 -> SSP
-    cpu.reg.ssp -= 2;
     cpu.cycle(2);   // ?
+    cpu.push_ssp_short(todo!("Format + Offset word -> SSP"));   // +4(0/1) => 4(0/1)
 
     // PC -> (SSP)
-    cpu.write_mem_long(cpu.reg.ssp, cpu.reg.pc);        // +8(0/2) => ??(1/2)
-
     // SSP - 4 -> SSP
-    cpu.reg.ssp -= 4;
     cpu.cycle(2);   // ?
+    cpu.push_ssp_long(cpu.reg.pc);        // +8(0/2) => ??(1/2)
 
     // SR -> (SSP)
-    cpu.write_mem_short(cpu.reg.ssp, cpu.reg.sr.sr());  // +4(0/1) => ??(1/3)
-
     // SSP - 2 -> SSP
-    cpu.reg.ssp -= 2;
     cpu.cycle(2);   // ?
+    cpu.push_ssp_short(cpu.reg.sr.sr());  // +4(0/1) => ??(1/3)
 
     // (Vector) -> PC
-    cpu.reg.pc = cpu.read_mem_long(vector_num as u32 * VECTOR_SIZE);// +8(2/0) => 30(3/3)  (r/w => 24)
+    cpu.reg.pc = cpu.read_mem_long(vector_num as u32 * CPU_VECTOR_SIZE);// +8(2/0) => 30(3/3)  (r/w => 24)
 }
 
 fn trapv(cpu: &mut CPU) {
     if cpu.reg.sr.v() {
-        trap_vec(CPUVector::TRAPV as u8, cpu);   // +30(3/3) => 34(4/3)
+        trap_vec(CPUVector::TRAPV as u8, cpu);   // +30(3/3) => 34(4/3) (4(1/0) when v == 0)
     }
 }
 
@@ -1115,17 +1060,81 @@ fn trap(op: u16, cpu: &mut CPU) {
         // format code to the system stack"
         // SSP - 2 -> SSP
         // Format/Offset -> (SSP)
+        let format_offset = todo!("Format/offset -> (SSP)");
+        cpu.push_ssp_short(format_offset);
     }
 
     // SSP-4 -> SSP
-    cpu.reg.ssp -= 4;
     // PC -> (SSP)
-    cpu.write_mem_long(cpu.reg.ssp, cpu.reg.pc);    // +8(0/2)
+    cpu.push_ssp_long(cpu.reg.pc);       // +8(0/2)
     // SSP - 2 -> SSP
-    cpu.reg.ssp -= 2;
     // SR -> (SSP)
-    cpu.write_mem_short(cpu.reg.ssp, cpu.reg.sr.sr()); // +4(0/1)
+    cpu.push_ssp_short(cpu.reg.sr.sr()); // +4(0/1)
     // Vector Address -> PC
-    let vector_addr = v * VECTOR_SIZE + 32 * VECTOR_SIZE;
-    cpu.reg.pc = vector_addr as u32;
+    let vector_addr = v * CPU_VECTOR_SIZE + 32 * CPU_VECTOR_SIZE;
+    cpu.reg.pc = vector_addr;
+}
+
+fn jmp(op: u16, cpu: &mut CPU) {
+    let am = AddressingMode::decode_op(op);
+
+    assert_valid_am(am, 0b0010011_11011);
+
+    // jumps work a bit different from usual instructions in that working with
+    // "pointers" leads to jumping to the pointer, not reading what's at that address.
+    // So, we simply skip the middle-man (`cpu.read_am`) and calculate directly.
+    let destination_addr = cpu.calculate_am_operand(DataSize::Long, am);
+
+    if op & 0b1_000_000 == 0 {
+        // jsr
+        // SP - 4 -> SP;
+        // PC -> (SP);
+        // TODO?: should this happen before or after am operand calculation?
+        cpu.push_usp_long(cpu.reg.pc);  // + 8(0/2)
+    }
+
+    // Destination Address -> PC
+    cpu.reg.pc = destination_addr;
+    println!("set PC to: {:08x}", cpu.reg.pc);
+}
+
+fn rts(ret_op: ReturnOp, cpu: &mut CPU) {
+    // All these instructions are "supposed to"(?) have an extra read cycle:
+    // - RTS: 16(4/0)
+    // - RTR: 20(5/0)
+    // - RTE: 20(5/0)
+    cpu.cycle(4);
+
+    match ret_op {
+        ReturnOp::Exception => {
+            if cpu.reg.sr.supervisor_state() {
+                // (SP) -> SR;
+                // SP + 2 -> PC;
+                let val = cpu.pop_usp_short();
+                cpu.reg.sr.modify_sr(val);  // +4(1/0)
+                // SP + 4 -> SP;
+                // Restore state and deallocate stack according to (SP)
+                let old_state = cpu.pop_usp_long();         // +8(2/0)
+                todo!("rte with {old_state:08x}");
+            } else {
+                trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
+            }
+        },
+        ReturnOp::Subroutine => {
+            // (SP) -> PC;
+            // SP + 4 -> SP
+            println!("RTS");
+            cpu.reg.pc = cpu.pop_usp_long();    // +8(2/0)
+            println!("set PC to: {:08x}", cpu.reg.pc);
+        },
+        ReturnOp::AndRestoreCCR => {
+            // (SP) -> CCR;
+            // SP + 2 -> SP
+            let val = cpu.pop_usp_short();
+            cpu.reg.sr.modify_ccr(val); // +4(1/0)
+            // (SP) -> PC;
+            // SP + 4 -> SP
+            cpu.reg.pc = cpu.pop_usp_long();                // +8(2/0)
+        },
+    }
 }
