@@ -474,6 +474,7 @@ impl CPU {
     }
 
     pub fn init(&mut self) {
+        self.reg.sr.set_supervisor();
         self.reg.ssp = self.read_mem_long(CPUVector::ResetSP as u32 * CPU_VECTOR_SIZE);
         self.reg.pc = self.read_mem_long(CPUVector::ResetPC as u32 * CPU_VECTOR_SIZE);
     }
