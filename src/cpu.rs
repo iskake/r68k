@@ -59,7 +59,7 @@ pub enum CPUVector {
 
 
 #[derive(Debug, Clone, Copy)]
-enum RegisterNum {
+pub enum RegisterNum {
     R0,
     R1,
     R2,
@@ -861,9 +861,9 @@ impl CPU {
             // 4(1/0) | 8(2/0)
             AddressingMode::Imm => {
                 match size {
+                    DataSize::Byte => self.read_pc_inc_short() as u32 & 0xff,
                     DataSize::Word => self.read_pc_inc_short() as u32,
                     DataSize::Long => self.read_pc_inc_long(),
-                    _ => unreachable!(),
                 }
             },
             AddressingMode::Invalid => panic!("Cannot read with invalid addressing mode"),
@@ -966,6 +966,12 @@ impl CPU {
 
 
     /// Cycles: 4(1/0)
+    pub fn read_pc_short(&mut self) -> u16 {
+        let val = self.read_mem_short(self.reg.pc);
+        val
+    }
+
+    /// Cycles: 4(1/0)
     pub fn read_pc_inc_short(&mut self) -> u16 {
         let val = self.read_mem_short(self.reg.pc);
         self.reg.pc += 2;
@@ -973,10 +979,21 @@ impl CPU {
     }
 
     /// Cycles: 8(2/0)
+    pub fn read_pc_long(&mut self) -> u32 {
+        self.read_mem_long(self.reg.pc)
+    }
+
+    /// Cycles: 8(2/0)
     pub fn read_pc_inc_long(&mut self) -> u32 {
-        let val_hi = self.read_pc_inc_short() as u32;
-        let val_lo = self.read_pc_inc_short() as u32;
-        (val_hi << 16) | val_lo
+        if self.data_bus_mask & 0x8000_0000 == 0 {
+            let val_hi = self.read_pc_inc_short() as u32;
+            let val_lo = self.read_pc_inc_short() as u32;
+            (val_hi << 16) | val_lo
+        } else {
+            let val = self.read_pc_long();
+            self.reg.pc += 2;
+            val
+        }
     }
 
     fn fetch_and_run(&mut self) {

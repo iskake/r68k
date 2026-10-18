@@ -2,12 +2,105 @@ use std::fmt::Display;
 
 use crate::{bits::{DataSize, is_negative, is_zero, sign_extend, sign_extend_byte}, cpu::{CPU, CPURevision, CPUVector, RegisterNum, CPU_VECTOR_SIZE}};
 
-enum DataType {
-    Immediate,
-    BitIndex,
-    Displacement,
-    DisplacementOptional,
-    RegisterListMask,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Condition {
+    T,
+    F,
+    HI,
+    LS,
+    CC,
+    CS,
+    NE,
+    EQ,
+    VC,
+    VS,
+    PL,
+    MI,
+    GE,
+    LT,
+    GT,
+    LE,
+}
+
+impl Condition {
+    fn is_true(&self, cpu: &mut CPU) -> bool {
+        match self {
+            Condition::T  => true,
+            Condition::F  => false,
+            Condition::HI => !cpu.reg.sr.c() && !cpu.reg.sr.z(),
+            Condition::LS => cpu.reg.sr.c() || cpu.reg.sr.z(),
+            Condition::CC => !cpu.reg.sr.c(),
+            Condition::CS => cpu.reg.sr.c(),
+            Condition::NE => !cpu.reg.sr.z(),
+            Condition::EQ => cpu.reg.sr.z(),
+            Condition::VC => !cpu.reg.sr.v(),
+            Condition::VS => cpu.reg.sr.v(),
+            Condition::PL => !cpu.reg.sr.n(),
+            Condition::MI => cpu.reg.sr.n(),
+            Condition::GE => cpu.reg.sr.n() && cpu.reg.sr.v() || !cpu.reg.sr.n() && !cpu.reg.sr.v(),
+            Condition::LT => cpu.reg.sr.n() && !cpu.reg.sr.v() || !cpu.reg.sr.n() && cpu.reg.sr.v(),
+            Condition::GT => {
+                cpu.reg.sr.n() && cpu.reg.sr.v() && !cpu.reg.sr.z()
+                || !cpu.reg.sr.n() && !cpu.reg.sr.v() && !cpu.reg.sr.z()
+            },
+            Condition::LE => {
+                cpu.reg.sr.z()
+                || cpu.reg.sr.n() && !cpu.reg.sr.v()
+                || !cpu.reg.sr.n() && cpu.reg.sr.v()
+            },
+        }
+    }
+}
+
+impl From<u16> for Condition {
+    fn from(value: u16) -> Self {
+        use Condition::*;
+
+        assert!(value <= 0b1111, "Condition must be <= 0b1111.");
+
+        match value {
+            0 => T,
+            1 => F,
+            2 => HI,
+            3 => LS,
+            4 => CC,
+            5 => CS,
+            6 => NE,
+            7 => EQ,
+            8 => VC,
+            9 => VS,
+            10 => PL,
+            11 => MI,
+            12 => GE,
+            13 => LT,
+            14 => GT,
+            15 => LE,
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl std::fmt::Display for Condition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Condition::T  => write!(f, "t"),
+            Condition::F  => write!(f, "f"),
+            Condition::HI => write!(f, "hi"),
+            Condition::LS => write!(f, "ls"),
+            Condition::CC => write!(f, "cc"),
+            Condition::CS => write!(f, "cs"),
+            Condition::NE => write!(f, "ne"),
+            Condition::EQ => write!(f, "eq"),
+            Condition::VC => write!(f, "vc"),
+            Condition::VS => write!(f, "vs"),
+            Condition::PL => write!(f, "pl"),
+            Condition::MI => write!(f, "mi"),
+            Condition::GE => write!(f, "ge"),
+            Condition::LT => write!(f, "lt"),
+            Condition::GT => write!(f, "gt"),
+            Condition::LE => write!(f, "le"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -311,10 +404,40 @@ impl Display for Instruction {
             ADDQ  { op } => todo!(),
             SUBQ  { op } => todo!(),
             Scc   { op } => todo!(),
-            DBcc  { op } => todo!(),
-            BRA   { op } => todo!(),
-            BSR   { op } => todo!(),
-            Bcc   { op } => todo!(),
+            DBcc  { op } => {
+                let cc: Condition = ((op & 0x0f00) >> 8).into();
+                let dn = get_op_xn_lo(*op);
+
+                write!(f, "db{} d{},displace", cc, dn)
+            },
+            BRA   { op } => {
+                let displace8bit = op & 0xff;
+                let s = match displace8bit {
+                    0x00 => DataSize::Word,
+                    0xff => DataSize::Long,
+                    _ => DataSize::Byte
+                };
+                write!(f, "bra{} displace", s)
+            },
+            BSR   { op } => {
+                let displace8bit = op & 0xff;
+                let s = match displace8bit {
+                    0x00 => DataSize::Word,
+                    0xff => DataSize::Long,
+                    _ => DataSize::Byte
+                };
+                write!(f, "bsr{} displace", s)
+            },
+            Bcc   { op } => {
+                let displace8bit = op & 0xff;
+                let s = match displace8bit {
+                    0x00 => DataSize::Word,
+                    0xff => DataSize::Long,
+                    _ => DataSize::Byte
+                };
+                let cc: Condition = ((op & 0x0f00) >> 8).into();
+                write!(f, "b{}{} displace", cc, s)
+            },
             DIVU  { op } => todo!(),
             DIVS  { op } => todo!(),
             SBCD  { op } => todo!(),
@@ -363,6 +486,11 @@ impl Instruction {
             // jumps
             Instruction::JSR   { op } => jmp(op, cpu),
             Instruction::JMP   { op } => jmp(op, cpu),
+            // branch
+            Instruction::DBcc  { op } => bra(op, cpu),
+            Instruction::BRA   { op } => bra(op, cpu),
+            Instruction::BSR   { op } => bra(op, cpu),
+            Instruction::Bcc   { op } => bra(op, cpu),
             // returns
             Instruction::RTE   => rts(ReturnOp::Exception, cpu),
             Instruction::RTS   => rts(ReturnOp::Subroutine, cpu),
@@ -399,10 +527,6 @@ impl Instruction {
             Instruction::ADDQ  { op } => todo!(),
             Instruction::SUBQ  { op } => todo!(),
             Instruction::Scc   { op } => todo!(),
-            Instruction::DBcc  { op } => todo!(),
-            Instruction::BRA   { op } => todo!(),
-            Instruction::BSR   { op } => todo!(),
-            Instruction::Bcc   { op } => todo!(),
             Instruction::DIVU  { op } => todo!(),
             Instruction::DIVS  { op } => todo!(),
             Instruction::SBCD  { op } => todo!(),
@@ -1202,6 +1326,99 @@ fn jmp(op: u16, cpu: &mut CPU) {
     // Destination Address -> PC
     cpu.reg.pc = destination_addr;
     println!("set PC to: {:08x}", cpu.reg.pc);
+}
+
+/// Get the displacement operand (curr byte or next word/long) following
+/// the current instruction. Does _not_ increase `pc`.
+///
+/// Cycles: .b, .w: +4(1/0) | .l: +8(2/0)
+fn get_displacement_no_inc(cpu: &mut CPU, disp_tmp: u16) -> i32 {
+    if disp_tmp == 0x00 { 
+        sign_extend(DataSize::Long, cpu.read_pc_short() as u32) as i32  // +4(1/0)
+    } else if disp_tmp == 0xff
+        && (cpu.revision == CPURevision::M68020
+        ||  cpu.revision == CPURevision::M68030
+        ||  cpu.revision == CPURevision::M68040)
+    {
+        cpu.read_pc_long() as i32          // +8(2/0)
+    } else {
+        // Seems to have the same amount of cycles as 16 bit displacement,
+        // so we just read at the pc anyway.
+        cpu.read_pc_short();            // +4(1/0)
+        sign_extend_byte(disp_tmp as u8) as i32
+    }
+}
+
+fn bra(op: u16, cpu: &mut CPU) {
+    let dbcc = (op & 0xf000) == 0x5000;
+    let condition = (op & 0x0f00) >> 8;
+    let disp_tmp = op & 0x00ff;
+
+    if condition == 0 && !dbcc {
+        // BRA
+        let displacement = get_displacement_no_inc(cpu, disp_tmp); // .b, .w: +4(1/0) | .l: +8(2/0)
+        println!("DISPLACE: {displacement:08x}");
+
+        // PC + d_n -> PC
+        cpu.reg.pc = cpu.reg.pc.wrapping_add_signed(displacement);
+        cpu.cycle(2);
+    } else if condition == 1 && !dbcc {
+        // BSR
+        let displacement = get_displacement_no_inc(cpu, disp_tmp); // .b, .w: +4(1/0) | .l: +8(2/0)
+
+        // SP - 4 -> SP;
+        // PC -> (SP);
+        cpu.push_sp_long(cpu.reg.pc);   // +8(0/2)
+
+        // PC + d_n -> PC
+        cpu.reg.pc = cpu.reg.pc.wrapping_add_signed(displacement);
+        cpu.cycle(2);
+    } else if !dbcc {
+        let condition: Condition = condition.into();
+        // Bcc
+        if condition.is_true(cpu) {
+            let displacement = get_displacement_no_inc(cpu, disp_tmp); // .b, .w: +4(1/0) | .l: +8(2/0)
+
+            // PC + d_n -> PC
+            cpu.reg.pc = cpu.reg.pc.wrapping_add_signed(displacement);
+            cpu.cycle(2);       // +2(0/0)
+        } else {
+            cpu.cycle(4);       // +4(0/0)
+
+            if disp_tmp == 0x00 {
+                // .w has 4 more cycles when branch not taken...
+                cpu.cycle(4);   // +4(0/0)
+            }
+        }
+    } else {
+        // DBcc
+        let condition: Condition = condition.into();
+        let disp = cpu.read_pc_short();
+
+        // CURR CYCLES: 8(2/0)
+        if !condition.is_true(cpu) {
+            let dn: RegisterNum = get_op_xn_lo(op).into();
+            // Dn - 1 -> Dn;
+            let dn_val = cpu.reg.read_data(dn);
+            cpu.reg.write_data(dn, DataSize::Word, dn_val - 1);
+
+            if cpu.reg.read_data(dn) & 0xffff == 0xffff {
+                // branch taken => cycs: 10(2/0)
+                let displacement = sign_extend(DataSize::Long, disp as u32) as i32;
+
+                // PC + d_n -> PC
+                cpu.reg.pc = cpu.reg.pc.wrapping_add_signed(displacement);
+            } else {
+                // branch not taken => cycs: 14(3/0)
+                cpu.read_pc_inc_short();    // +4(1/0)
+            }
+            cpu.cycle(2);           // +2(0/0)
+        } else {
+            // cc is true => cycs: 12(2/0)
+            cpu.reg.pc += 2;
+            cpu.cycle(4);           // +4(0/0)
+        }
+    }
 }
 
 fn rts(ret_op: ReturnOp, cpu: &mut CPU) {
