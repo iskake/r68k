@@ -18,7 +18,9 @@ fn main() {
     cpu.init();
     cpu.print_state();
     loop {
-        cpu.run();
+        if !cpu.run() {
+            break;
+        }
     }
 }
 

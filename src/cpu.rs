@@ -395,30 +395,41 @@ pub struct CPU {
 
     mmu: MMU,
 
+    data_bus: u16,
+    addr_bus: u32,
+
+    stopped: bool,
+
     cycles: usize,
     read_cycles: usize,
     write_cycles: usize,
+
     pub revision: CPURevision,
+    addr_bus_mask: u32,
 }
 
 impl CPU {
     pub fn new(rev: CPURevision) -> CPU {
-        match rev {
-            CPURevision::M68000 => {},
+        let addr_bus_mask = match rev {
+            CPURevision::M68000 => { 0x00ff_ffff },
             CPURevision::M68010 => todo!("68010 support"),
             CPURevision::M68020 => todo!("68020 support"),
             CPURevision::M68030 => todo!("68030 support"),
             CPURevision::M68040 => todo!("68040 support"),
             CPURevision::M68060 => todo!("68060 support"),
-        }
+        };
 
         CPU {
             reg: Registers::new(),
             mmu: MMU::new(0x1000000),
+            data_bus: 0,
+            addr_bus: 0,
+            stopped: false,
             cycles: 0,
             read_cycles: 0,
             write_cycles: 0,
             revision: rev,
+            addr_bus_mask,
         }
     }
 
@@ -434,12 +445,12 @@ impl CPU {
     }
 
     pub fn init(&mut self) {
-        self.reg.usp = self.read_mem_long(CPUVector::ResetSP as u32 * CPU_VECTOR_SIZE);
+        self.reg.ssp = self.read_mem_long(CPUVector::ResetSP as u32 * CPU_VECTOR_SIZE);
         self.reg.pc = self.read_mem_long(CPUVector::ResetPC as u32 * CPU_VECTOR_SIZE);
     }
 
     pub fn print_state(&self) {
-        println!("CPU STATE");
+        println!("CPU STATE ({})", self.cpu_name());
         println!(
             "  d0: {:08x}, d1: {:08x}, d2: {:08x}, d3: {:08x}, d4: {:08x}, d5: {:08x}, d6: {:08x}, d7: {:08x}",
             self.reg.d0,
@@ -452,7 +463,7 @@ impl CPU {
             self.reg.d7,
         );
         println!(
-            "  a0: {:08x}, a1: {:08x}, a2: {:08x}, a3: {:08x}, a4: {:08x}, a5: {:08x}, a6: {:08x}, sp: {:08x} ({:08x})",
+            "  a0: {:08x}, a1: {:08x}, a2: {:08x}, a3: {:08x}, a4: {:08x}, a5: {:08x}, a6: {:08x}, sp: {:08x} (ssp: {:08x})",
             self.reg.a0,
             self.reg.a1,
             self.reg.a2,
@@ -463,45 +474,79 @@ impl CPU {
             self.reg.usp,
             self.reg.ssp,
         );
-        println!("  sr hi: {:08b} ccr: {:08b}", self.reg.sr.sr_hi(), self.reg.sr.ccr());
-        println!("  pc: {:08x}, cycles: {}", self.reg.pc, self.cycles);
+        println!(
+            "  sr: {:04x} (hi: {:08b} ccr: {:08b})",
+            self.reg.sr.sr(),
+            self.reg.sr.sr_hi(),
+            self.reg.sr.ccr(),
+        );
+        println!(
+            "  pc: {:08x}, cycles: {}({}/{}), data bus: {:08x}, addr bus: {:08x}",
+            self.reg.pc,
+            self.cycles,
+            self.read_cycles,
+            self.write_cycles,
+            self.data_bus,
+            self.addr_bus
+        );
+    }
+
+    fn update_data_bus(&mut self, data: u16) {
+        self.data_bus = data;
+    }
+
+    fn update_addr_bus(&mut self, addr: u32) {
+        self.addr_bus = addr & self.addr_bus_mask;
     }
 
     /// Cycles: 0(0/0)
     pub fn write_mem_byte_internal(&mut self, addr: u32, val: u8) {
-        self.mmu.write_byte(addr, val);
+        self.mmu.write_byte(addr & self.addr_bus_mask, val);
     }
 
     /// Cycles: 0(0/0)
     pub fn write_mem_short_internal(&mut self, addr: u32, val: u16) {
-        self.mmu.write_short(addr, val);
+        self.mmu.write_short(addr & self.addr_bus_mask, val);
     }
 
     /// Cycles: 0(0/0)
     pub fn write_mem_long_internal(&mut self, addr: u32, val: u32) {
-        self.mmu.write_long(addr, val);
+        self.mmu.write_long(addr & self.addr_bus_mask, val);
     }
 
     /// Cycles: 4(0/1)
     fn write_mem_byte(&mut self, addr: u32, val: u8) {
-        self.cycle(4);
-        self.write_cycles += 1;
-        self.write_mem_byte_internal(addr, val);
+        self.update_data_bus(val as u16);
+        self.update_addr_bus(addr);
+
+        self.write_mem_byte_internal(self.addr_bus, val);
+        self.cycle_write();
     }
 
     /// Cycles: 4(0/1)
     fn write_mem_short(&mut self, addr: u32, val: u16) {
-        self.cycle(4);
-        self.write_cycles += 1;
+        self.update_data_bus(val);
+        self.update_addr_bus(addr);
+
         self.write_mem_short_internal(addr, val);
+        self.cycle_write();
     }
 
     /// Cycles: 8(0/2)
     fn write_mem_long(&mut self, addr: u32, val: u32) {
         let val_hi = ((val & 0xffff_0000) >> 16) as u16;
         let val_lo = (val & 0x0000_ffff) as u16;
-        self.write_mem_short(addr, val_hi);
-        self.write_mem_short(addr+2, val_lo);
+
+        self.update_addr_bus(addr);
+        self.update_data_bus(val_hi);
+
+        self.write_mem_short_internal(addr, val_hi);
+        self.cycle_write();
+
+        self.update_data_bus(val_lo);
+
+        self.write_mem_short_internal(addr+2, val_lo);
+        self.cycle_write();
     }
 
     /// Write a byte/word/long (based on the `size`) to address `addr`
@@ -521,29 +566,59 @@ impl CPU {
         }
     }
 
+    /// Cycles: 0(0/0)
+    pub fn read_mem_byte_internal(&mut self, addr: u32) -> u8 {
+        self.mmu.read_byte(addr & self.addr_bus_mask)
+    }
+
+    /// Cycles: 0(0/0)
+    pub fn read_mem_short_internal(&mut self, addr: u32) -> u16 {
+        self.mmu.read_short(addr & self.addr_bus_mask)
+    }
+
+    /// Cycles: 8(2/0)
+    pub fn read_mem_long_internal(&mut self, addr: u32) -> u32 {
+        self.mmu.read_long(addr & self.addr_bus_mask)
+    }
+
     /// Cycles: 4(1/0)
     fn read_mem_byte(&mut self, addr: u32) -> u8 {
         // Bus is 16 bits wide, so 1 read cycle (same as short) is always performed
-        self.cycle(4);
-        self.read_cycles += 1;
-        self.mmu.read_byte(addr)
+        self.update_addr_bus(addr);
+
+        let val = self.read_mem_byte_internal(addr & self.addr_bus_mask);
+
+        self.update_data_bus(val as u16);
+        self.cycle_read();
+
+        val
     }
 
     /// Cycles: 4(1/0)
     fn read_mem_short(&mut self, addr: u32) -> u16 {
-        self.cycle(4);
-        self.read_cycles += 1;
-        self.mmu.read_short(addr)
+        self.update_addr_bus(addr);
+
+        let val = self.read_mem_short_internal(addr & self.addr_bus_mask);
+
+        self.update_data_bus(val);
+        self.cycle_read();
+
+        val
     }
 
     /// Cycles: 8(2/0)
     fn read_mem_long(&mut self, addr: u32) -> u32 {
-        // ? Timing question: does simply cycling twice (8) have the same
-        // ? effect as two short reads in all cases?
-        // self.cycle(8);
-        // self.mmu.read_long(addr);
-        let val_hi = self.read_mem_short(addr) as u32;
-        let val_lo = self.read_mem_short(addr+2) as u32;
+        self.update_addr_bus(addr);
+
+        let val_hi = self.read_mem_short_internal(addr & self.addr_bus_mask) as u32;
+
+        self.update_data_bus(val_hi as u16);
+        self.cycle_read();
+
+        let val_lo = self.read_mem_short_internal((addr+2) & self.addr_bus_mask) as u32;
+
+        self.update_data_bus(val_lo as u16);
+        self.cycle_read();
 
         (val_hi << 16) | val_lo
     }
@@ -883,7 +958,12 @@ impl CPU {
         inst.run(self);
     }
 
-    pub fn run(&mut self) {
+    pub fn run(&mut self) -> bool {
+        if self.stopped {
+            println!("Stopping execution.");
+            return false;
+        }
+
         println!();
         let pre_cycles = self.cycles;
         let pre_cycles_read = self.read_cycles;
@@ -899,10 +979,22 @@ impl CPU {
             post_cycles_read - pre_cycles_read,
             post_cycles_write - pre_cycles_write
         );
+
+        true
     }
 
     fn cycle(&mut self, amount: usize) {
         self.cycles += amount;
+    }
+
+    fn cycle_read(&mut self) {
+        self.cycle(4);
+        self.read_cycles += 1;
+    }
+
+    fn cycle_write(&mut self) {
+        self.cycle(4);
+        self.write_cycles += 1;
     }
 
     /// Cycle only when size is .l
