@@ -295,7 +295,7 @@ impl Registers {
         }
     }
 
-    fn read_address(&self, an: RegisterNum) -> u32 {
+    fn read_address(&self, an: RegisterNum, supervisor: bool) -> u32 {
         match an {
             RegisterNum::R0 => self.a0,
             RegisterNum::R1 => self.a1,
@@ -304,7 +304,7 @@ impl Registers {
             RegisterNum::R4 => self.a4,
             RegisterNum::R5 => self.a5,
             RegisterNum::R6 => self.a6,
-            RegisterNum::R7 => self.usp,
+            RegisterNum::R7 => if supervisor { self.ssp } else { self.usp },
         }
     }
 
@@ -690,6 +690,8 @@ impl CPU {
     }
 
     fn calculate_am_operand(&mut self, size: DataSize, am: AddressingMode) -> u32 {
+        let supervisor = self.reg.sr.supervisor_state();
+
         match am {
             // Cycle counts c(r/w)
             // .b, .w | .l
@@ -698,10 +700,10 @@ impl CPU {
             // 0(0/0) | 0(0/0)
             AddressingMode::AddrReg(an) => 0,
             // 4(1/0) | 8(2/0)
-            AddressingMode::Addr(an) => self.reg.read_address(an),
+            AddressingMode::Addr(an) => self.reg.read_address(an, supervisor),
             // 4(1/0) | 8(2/0)
             AddressingMode::AddrPostInc(an) => {
-                let r = self.reg.read_address(an);
+                let r = self.reg.read_address(an, supervisor);
                 self.reg.inc_address(an, size);
 
                 r
@@ -709,7 +711,7 @@ impl CPU {
             // 6(1/0) | 10(2/0)
             AddressingMode::AddrPreDec(an) => {
                 self.reg.dec_address(an, size);
-                let r = self.reg.read_address(an);
+                let r = self.reg.read_address(an, supervisor);
 
                 // ?
                 self.cycle(2);
@@ -718,7 +720,7 @@ impl CPU {
             },
             // 8(2/0) | 12(3/0)
             AddressingMode::AddrDisplace(an) => {
-                let r = self.reg.read_address(an);
+                let r = self.reg.read_address(an, supervisor);
                 let d = sign_extend(DataSize::Long, self.read_pc_inc_short() as u32);
                 let addr = r + d;
                 addr
@@ -726,13 +728,13 @@ impl CPU {
             // 10(2/0)| 14(3/0)
             AddressingMode::AddrIdx(an) => {
                 // TODO: other indexed addressing modes
-                let a_val = self.reg.read_address(an);
+                let a_val = self.reg.read_address(an, supervisor);
                 let (x, xn, s, _, d) = self.read_extension_brief();
                 let displacement = sign_extend_byte(d);
 
                 let x_reg_val = if x {
                     // address register
-                    self.reg.read_address(xn)
+                    self.reg.read_address(xn, supervisor)
                 } else {
                     // data register
                     self.reg.read_data(xn)
@@ -769,7 +771,7 @@ impl CPU {
 
                 let x_reg_val = if x {
                     // address register
-                    self.reg.read_address(xn)
+                    self.reg.read_address(xn, supervisor)
                 } else {
                     // data register
                     self.reg.read_data(xn)
@@ -836,7 +838,10 @@ impl CPU {
             // 0(0/0) | 0(0/0)
             AddressingMode::DataReg(dn) => self.reg.read_data(dn),
             // 0(0/0) | 0(0/0)
-            AddressingMode::AddrReg(an) => self.reg.read_address(an),
+            AddressingMode::AddrReg(an) => {
+                let supervisor = self.reg.sr.supervisor_state();
+                self.reg.read_address(an, supervisor)
+            },
             // 4(1/0) | 8(2/0)
             AddressingMode::Imm => {
                 match size {

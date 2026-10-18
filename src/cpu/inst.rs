@@ -935,7 +935,7 @@ fn movep(op: u16, cpu: &mut CPU) {
         println!("MOVEP REG -> MEM");
         let val = cpu.reg.read_data(dn);
 
-        let a_r = cpu.reg.read_address(an);
+        let a_r = cpu.reg.read_address(an, cpu.reg.sr.supervisor_state());
         let addr = a_r + displacement as u32;
 
         // CURR CYCLES: 8(2/0)
@@ -955,7 +955,7 @@ fn movep(op: u16, cpu: &mut CPU) {
     } else {
         // mem -> reg
         println!("MOVEP MEM -> REG");
-        let a_r = cpu.reg.read_address(an);
+        let a_r = cpu.reg.read_address(an, cpu.reg.sr.supervisor_state());
         let addr = a_r + displacement as u32;
 
         let loops = match size {
