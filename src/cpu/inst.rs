@@ -151,7 +151,7 @@ pub enum Instruction {
     NBCD { op: u16 },
     SWAP { op: u16 },
     PEA  { op: u16 },
-    ILLEGAL,
+    ILLEGAL { op: u16 },
     TAS  { op: u16 },
     TST  { op: u16 },
     TRAP { op: u16 },
@@ -271,7 +271,7 @@ impl Display for Instruction {
                     write!(f, "movem{} list,{}", s, am)
                 }
             },
-            MOVEQ { op } => write!(f, "moveq #${:02x}", op & 0xff),
+            MOVEQ { op } => write!(f, "moveq #0x{:02x}", op & 0xff),
             MOVEToFrom { op } => todo!(),
 
             NEGX  { op } => todo!(),
@@ -282,7 +282,7 @@ impl Display for Instruction {
             NBCD  { op } => todo!(),
             SWAP  { op } => todo!(),
             PEA   { op } => todo!(),
-            ILLEGAL            => write!(f, "illegal"),
+            ILLEGAL {op} => write!(f, "illegal"),
             TAS   { op } => todo!(),
             TST   { op } => todo!(),
             TRAP  { op } => todo!(),
@@ -291,7 +291,7 @@ impl Display for Instruction {
             MOVEUSP {op} => todo!(),
             RESET              => write!(f, "reset"),
             NOP                => write!(f, "nop"),
-            STOP               => write!(f, "stop"),
+            STOP               => write!(f, "stop #imm"),
             RTE                => write!(f, "rte"),
             RTS                => write!(f, "rts"),
             TRAPV              => write!(f, "trapv"),
@@ -330,7 +330,7 @@ impl Display for Instruction {
             LSd   { op } => todo!(),
             ROXd  { op } => todo!(),
             ROd   { op } => todo!(),
-            Undefined { op } => write!(f, "undefined ${op:04x}"),
+            Undefined { op } => write!(f, "undefined 0x{op:04x}"),
         }
     }
 }
@@ -349,9 +349,18 @@ impl Instruction {
             // exceptions, etc.
             Instruction::TRAP  { op } => trap(op, cpu),
             Instruction::TRAPV => trapv(cpu),
-            Instruction::ILLEGAL => todo!(),
+            Instruction::ILLEGAL { op } => trap_illegal(op, cpu),
             Instruction::RESET => todo!(),
-            Instruction::STOP  => todo!(),
+            Instruction::STOP  => stop(cpu),
+            // jumps
+            Instruction::JSR   { op } => jmp(op, cpu),
+            Instruction::JMP   { op } => jmp(op, cpu),
+            // returns
+            Instruction::RTE   => rts(ReturnOp::Exception, cpu),
+            Instruction::RTS   => rts(ReturnOp::Subroutine, cpu),
+            Instruction::RTR   => rts(ReturnOp::AndRestoreCCR, cpu),
+
+            Instruction::NOP   => {},   // TODO: "does not begin execution until all pending bus cycles have completed."
 
             // [Unsorted]
             Instruction::ORI   { op } => todo!(),
@@ -372,17 +381,10 @@ impl Instruction {
             Instruction::PEA   { op } => todo!(),
             Instruction::TAS   { op } => todo!(),
             Instruction::TST   { op } => todo!(),
-            // jumps
-            Instruction::JSR   { op } => jmp(op, cpu),
-            Instruction::JMP   { op } => jmp(op, cpu),
-            // returns
-            Instruction::RTE   => rts(ReturnOp::Exception, cpu),
-            Instruction::RTS   => rts(ReturnOp::Subroutine, cpu),
-            Instruction::RTR   => rts(ReturnOp::AndRestoreCCR, cpu),
 
             Instruction::LINK  { op } => todo!(),
             Instruction::UNLK  { op } => todo!(),
-            Instruction::NOP   => {},   // TODO: "does not begin execution until all pending bus cycles have completed."
+
             Instruction::LEA   { op } => todo!(),
             Instruction::CHK   { op } => todo!(),
             Instruction::ADDQ  { op } => todo!(),
@@ -415,7 +417,7 @@ impl Instruction {
             Instruction::LSd   { op } => todo!(),
             Instruction::ROXd  { op } => todo!(),
             Instruction::ROd   { op } => todo!(),
-            Instruction::Undefined { op } => panic!("Undefined opcode {op:016b}"),
+            Instruction::Undefined { op } => trap_illegal(op, cpu),
         }
     }
 }
@@ -496,15 +498,26 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
             if !op_hi_byte_bit0_set {
                 let inst_type = xn_hi;
 
-                match inst_type {
-                    0b000 => ORI  { op },
-                    0b001 => ANDI { op },
-                    0b010 => SUBI { op },
-                    0b011 => ADDI { op },
-                    0b101 => EORI { op },
-                    0b110 => CMPI { op },
-                    0b100 => BTST { op },
-                    _ => Undefined { op },
+                // All instructions other than bset have s != 11
+                if s == 0b11 {
+                    if inst_type == 0b100 {
+                        // bset
+                        BTST { op } 
+                    } else {
+                        Undefined { op }
+                    }
+                } else {
+
+                    match inst_type {
+                        0b000 => ORI  { op },
+                        0b001 => ANDI { op },
+                        0b010 => SUBI { op },
+                        0b011 => ADDI { op },
+                        0b101 => EORI { op },
+                        0b110 => CMPI { op },
+                        0b100 => BTST { op },
+                        _ => Undefined { op },
+                    }
                 }
             } else {
                 // b[tst|chg|clr|set], movep
@@ -716,7 +729,7 @@ fn decode_opcode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u
                 // illegal, tas, tst
                 if s == 0b11 {
                     if m == 0b111 && xn == 0b100 {
-                        ILLEGAL
+                        ILLEGAL { op }
                     } else {
                         TAS { op }
                     }
@@ -1023,10 +1036,17 @@ fn not(op: u16, cpu: &mut CPU) {
 
 /// Cycles: 30(3/3)
 fn trap_vec(vector_num: u8, cpu: &mut CPU) {
-    // Format + Offset word -> (SSP) 
-    // SSP - 2 -> SSP
-    cpu.cycle(2);   // ?
-    cpu.push_ssp_short(todo!("Format + Offset word -> SSP"));   // +4(0/1) => 4(0/1)
+    let is_m68000 = if let CPURevision::M68000 = cpu.revision {true} else {false};
+    if !is_m68000 {
+        // As is written elsewhere:
+        // "The MC68000 and MC68008 do not write vector offset or
+        // format code to the system stack"
+        // Format + Offset word -> (SSP) 
+        // SSP - 2 -> SSP
+        cpu.cycle(2);   // ?
+        let format_offset = todo!("Format/offset -> (SSP)");
+        cpu.push_ssp_short(format_offset);  // +4(0/1) => 4(0/1)
+    }
 
     // PC -> (SSP)
     // SSP - 4 -> SSP
@@ -1037,6 +1057,8 @@ fn trap_vec(vector_num: u8, cpu: &mut CPU) {
     // SSP - 2 -> SSP
     cpu.cycle(2);   // ?
     cpu.push_ssp_short(cpu.reg.sr.sr());  // +4(0/1) => ??(1/3)
+
+    cpu.reg.sr.set_supervisor();
 
     // (Vector) -> PC
     cpu.reg.pc = cpu.read_mem_long(vector_num as u32 * CPU_VECTOR_SIZE);// +8(2/0) => 30(3/3)  (r/w => 24)
@@ -1050,9 +1072,6 @@ fn trapv(cpu: &mut CPU) {
 
 fn trap(op: u16, cpu: &mut CPU) {
     let v = (op & 0xf) as u32;
-
-    // 1 -> S-bit of SR
-    cpu.reg.sr.set_supervisor();
 
     let is_m68000 = if let CPURevision::M68000 = cpu.revision {true} else {false};
     if !is_m68000 {
@@ -1070,9 +1089,50 @@ fn trap(op: u16, cpu: &mut CPU) {
     // SSP - 2 -> SSP
     // SR -> (SSP)
     cpu.push_ssp_short(cpu.reg.sr.sr()); // +4(0/1)
+
+    // ? The programmers reference manual provides this as the top operation,
+    // ? but then `rte` (when popping the stack) would not disable the supervisor state
+    // 1 -> S-bit of SR
+    cpu.reg.sr.set_supervisor();
+
     // Vector Address -> PC
     let vector_addr = v * CPU_VECTOR_SIZE + 32 * CPU_VECTOR_SIZE;
-    cpu.reg.pc = vector_addr;
+    cpu.reg.pc = cpu.read_mem_long(vector_addr);    // +8(2/0)
+
+}
+
+fn trap_illegal(op: u16, cpu: &mut CPU) {
+    println!("illegal instruction ({op:016b})");
+
+    let is_m68000 = if let CPURevision::M68000 = cpu.revision {true} else {false};
+    if !is_m68000 {
+        // "The MC68000 and MC68008 cannot write vector offset and 
+        // format code to the system stack"
+        // SSP - 2 -> SSP
+        // Vector offset -> (SSP)
+        let vector_offset = todo!("Vector offset -> (SSP)");
+        cpu.push_ssp_short(vector_offset);
+    }
+
+    // SSP - 4 -> SSP;
+    // PC -> (SSP);
+    cpu.push_ssp_long(cpu.reg.pc);              // +8(0/2)
+    // SSP - 2 -> SSP;
+    // SR -> (SSP);
+    cpu.push_ssp_short(cpu.reg.sr.sr());        // +4(0/1)
+    // Illegal Instruction Vector Address -> PC
+    let vector_addr = CPUVector::IllegalInstruction as u32 * CPU_VECTOR_SIZE;
+    cpu.reg.pc = cpu.read_mem_long(vector_addr);    // +8(2/0)
+}
+
+fn stop(cpu: &mut CPU) {
+    if cpu.reg.sr.supervisor_state() {
+        let imm_data = cpu.read_pc_inc_short(); // +4(1/0)
+        cpu.reg.sr.modify_sr(imm_data);
+        cpu.stopped = true;
+    } else {
+        trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
+    }
 }
 
 fn jmp(op: u16, cpu: &mut CPU) {
@@ -1083,6 +1143,7 @@ fn jmp(op: u16, cpu: &mut CPU) {
     // jumps work a bit different from usual instructions in that working with
     // "pointers" leads to jumping to the pointer, not reading what's at that address.
     // So, we simply skip the middle-man (`cpu.read_am`) and calculate directly.
+    // TODO: also check that this matches up with cycle counts
     let destination_addr = cpu.calculate_am_operand(DataSize::Long, am);
 
     if op & 0b1_000_000 == 0 {
@@ -1103,7 +1164,8 @@ fn rts(ret_op: ReturnOp, cpu: &mut CPU) {
     // - RTS: 16(4/0)
     // - RTR: 20(5/0)
     // - RTE: 20(5/0)
-    cpu.cycle(4);
+    // Dummy read:
+    cpu.read_mem_short(0x0000_0000);
 
     match ret_op {
         ReturnOp::Exception => {
