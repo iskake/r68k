@@ -493,7 +493,7 @@ impl CPU {
             self.reg.d7,
         );
         println!(
-            "  a0: {:08x}, a1: {:08x}, a2: {:08x}, a3: {:08x}, a4: {:08x}, a5: {:08x}, a6: {:08x}, sp: {:08x} (ssp: {:08x})",
+            "  a0: {:08x}, a1: {:08x}, a2: {:08x}, a3: {:08x}, a4: {:08x}, a5: {:08x}, a6: {:08x}, a7: {:08x} ({})",
             self.reg.a0,
             self.reg.a1,
             self.reg.a2,
@@ -501,14 +501,15 @@ impl CPU {
             self.reg.a4,
             self.reg.a5,
             self.reg.a6,
-            self.reg.usp,
-            self.reg.ssp,
+            self.reg.read_address(RegisterNum::R7),
+            if self.reg.sr.supervisor_state() { "ssp" } else { "usp" }
         );
         println!(
-            "  sr: {:04x} (hi: {:08b} ccr: {:08b})",
-            self.reg.sr.sr(),
+            "  sr: {:08b}_{:08b}                                                                           ({}: {:08x})",
             self.reg.sr.sr_hi(),
             self.reg.sr.ccr(),
+            if self.reg.sr.supervisor_state() { "usp" } else { "ssp" },
+            if self.reg.sr.supervisor_state() { self.reg.usp } else { self.reg.ssp },
         );
         println!(
             "  pc: {:08x}, cycles: {}({}/{}), data bus: {:08x}, addr bus: {:08x}",
@@ -905,8 +906,8 @@ impl CPU {
     }
 
 
-    /// Push an element on top of the (user) stack.
-    /// Decreases the user stack pointer (a7 / usp) by 2.
+    /// Push an element on top of the stack.
+    /// Decreases the user stack pointer (a7) by 2.
     /// 
     /// ```p
     /// SP - 2 -> SP
@@ -916,11 +917,11 @@ impl CPU {
     /// Cycles: 4(0/1)
     pub fn push_sp_short(&mut self, val: u16) {
         self.reg.dec_address(RegisterNum::R7, DataSize::Word);
-        self.write_mem_short(self.reg.usp, val)
+        self.write_mem_short(self.reg.read_address(RegisterNum::R7), val)
     }
 
-    /// Push an element on top of the (user) stack.
-    /// Decreases the user stack pointer (a7 / usp) by 4.
+    /// Push an element on top of the stack.
+    /// Decreases the user stack pointer (a7) by 4.
     /// 
     /// ```p
     /// SP - 4 -> SP
@@ -930,11 +931,11 @@ impl CPU {
     /// Cycles: 8(0/2)
     pub fn push_sp_long(&mut self, val: u32) {
         self.reg.dec_address(RegisterNum::R7, DataSize::Long);
-        self.write_mem_long(self.reg.usp, val)
+        self.write_mem_long(self.reg.read_address(RegisterNum::R7), val)
     }
 
-    /// Pop an element from the top of the (user) stack.
-    /// Increases the user stack pointer (a7 / usp) by 4.
+    /// Pop an element from the top of the stack.
+    /// Increases the user stack pointer (a7) by 4.
     /// 
     /// ```p
     /// (SP) -> val;
@@ -943,13 +944,13 @@ impl CPU {
     /// 
     /// Cycles: 4(2/0)
     pub fn pop_sp_short(&mut self) -> u16 {
-        let res = self.read_mem_short(self.reg.usp);
+        let res = self.read_mem_short(self.reg.read_address(RegisterNum::R7));
         self.reg.inc_address(RegisterNum::R7, DataSize::Word);
         res
     }
 
-    /// Pop an element from the top of the (user) stack.
-    /// Increases the user stack pointer (a7 / usp) by 4.
+    /// Pop an element from the top of the stack.
+    /// Increases the user stack pointer (a7 ) by 4.
     /// 
     /// ```p
     /// (SP) -> val;
@@ -958,7 +959,7 @@ impl CPU {
     /// 
     /// Cycles: 8(2/0)
     pub fn pop_sp_long(&mut self) -> u32 {
-        let res = self.read_mem_long(self.reg.usp);
+        let res = self.read_mem_long(self.reg.read_address(RegisterNum::R7));
         self.reg.inc_address(RegisterNum::R7, DataSize::Long);
         res
     }
@@ -981,7 +982,7 @@ impl CPU {
     fn fetch_and_run(&mut self) {
         let op = self.read_pc_inc_short();
         let inst = inst::decode_opcode(op);
-        println!("   Got instruction: {inst} ({op:016b})");
+        println!("  Running instruction: {inst} ({op:016b})");
         inst.run(self);
     }
 
