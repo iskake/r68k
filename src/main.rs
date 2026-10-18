@@ -32,16 +32,31 @@ fn tmp_load_program(obj_file_path_str: &str, cpu: &mut CPU) {
     let slice = data.as_slice();
     let file = ElfBytes::<AnyEndian>::minimal_parse(slice).unwrap();
 
+    let vectors_header = file
+        .section_header_by_name(".vectors")
+        .expect("section table header could not be parsed")
+        .expect("no .vectorsheader found");
+
+    let (vectors, _) = file
+        .section_data(&vectors_header)
+        .expect("section header does not exist");
+
+    let offset = 0x0000_0000;
+    for (i, b) in vectors.iter().enumerate() {
+        cpu.write_mem_byte_internal(i as u32 + offset, *b);
+    }
+
     let text_header = file
         .section_header_by_name(".text")
         .expect("section table header could not be parsed")
         .expect("no .text header found");
 
+    let offset = 0x0001_0000;
     let (text, _) = file
         .section_data(&text_header)
         .expect("section header does not exist");
 
     for (i, b) in text.iter().enumerate() {
-        cpu.write_mem_byte_internal(i as u32, *b);
+        cpu.write_mem_byte_internal(i as u32 + offset, *b);
     }
 }
