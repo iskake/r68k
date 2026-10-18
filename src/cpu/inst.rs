@@ -988,9 +988,7 @@ fn move_from_to(op: u16, cpu: &mut CPU) {
             // move from sr
             assert_valid_am(am, 0b101111111000);
 
-            let is_m68000 = if let CPURevision::M68000 = cpu.revision {true} else {false};
-
-            if is_m68000 || cpu.reg.sr.supervisor_state() {
+            if cpu.revision == CPURevision::M68000 || cpu.reg.sr.supervisor_state() {
                 let val = cpu.reg.sr.sr();
                 cpu.write_am(DataSize::Word, am, val as u32);
             } else {
@@ -1036,8 +1034,7 @@ fn not(op: u16, cpu: &mut CPU) {
 
 /// Cycles: 30(3/3)
 fn trap_vec(vector_num: u8, cpu: &mut CPU) {
-    let is_m68000 = if let CPURevision::M68000 = cpu.revision {true} else {false};
-    if !is_m68000 {
+    if cpu.revision != CPURevision::M68000 {
         // As is written elsewhere:
         // "The MC68000 and MC68008 do not write vector offset or
         // format code to the system stack"
@@ -1073,8 +1070,7 @@ fn trapv(cpu: &mut CPU) {
 fn trap(op: u16, cpu: &mut CPU) {
     let v = (op & 0xf) as u32;
 
-    let is_m68000 = if let CPURevision::M68000 = cpu.revision {true} else {false};
-    if !is_m68000 {
+    if cpu.revision != CPURevision::M68000 {
         // "The MC68000 and MC68008 do not write vector offset or
         // format code to the system stack"
         // SSP - 2 -> SSP
@@ -1104,8 +1100,7 @@ fn trap(op: u16, cpu: &mut CPU) {
 fn trap_illegal(op: u16, cpu: &mut CPU) {
     println!("illegal instruction ({op:016b})");
 
-    let is_m68000 = if let CPURevision::M68000 = cpu.revision {true} else {false};
-    if !is_m68000 {
+    if cpu.revision != CPURevision::M68000 {
         // "The MC68000 and MC68008 cannot write vector offset and 
         // format code to the system stack"
         // SSP - 2 -> SSP

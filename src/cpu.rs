@@ -380,6 +380,7 @@ impl Registers {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CPURevision {
     // Temp.
     M68000,
