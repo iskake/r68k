@@ -281,13 +281,21 @@ impl Display for Instruction {
             EXT   { op } => todo!(),
             NBCD  { op } => todo!(),
             SWAP  { op } => todo!(),
-            PEA   { op } => todo!(),
+            PEA   { op } => write!(f, "pea {}", AddressingMode::decode_op(*op)),
             ILLEGAL {op} => write!(f, "illegal"),
             TAS   { op } => todo!(),
             TST   { op } => todo!(),
             TRAP  { op } => todo!(),
-            LINK  { op } => todo!(),
-            UNLK  { op } => todo!(),
+            LINK  { op } => {
+                let an = get_op_xn_lo(*op);
+                let size = if op & 0b0000011001010000 != 0 {
+                    DataSize::Word
+                } else {
+                    DataSize::Long
+                };
+                write!(f, "link{} a{},#imm", size, an)
+            },
+            UNLK  { op } => write!(f, "unlk a{}", get_op_xn_lo(*op)),
             MOVEUSP {op} => todo!(),
             RESET              => write!(f, "reset"),
             NOP                => write!(f, "nop"),
@@ -298,7 +306,7 @@ impl Display for Instruction {
             RTR                => write!(f, "rtr"),
             JSR   { op } => write!(f, "jsr {}", AddressingMode::decode_op(*op)),
             JMP   { op } => write!(f, "jmp {}", AddressingMode::decode_op(*op)),
-            LEA   { op } => todo!(),
+            LEA   { op } => write!(f, "lea {}", AddressingMode::decode_op(*op)),
             CHK   { op } => todo!(),
             ADDQ  { op } => todo!(),
             SUBQ  { op } => todo!(),
@@ -359,6 +367,9 @@ impl Instruction {
             Instruction::RTE   => rts(ReturnOp::Exception, cpu),
             Instruction::RTS   => rts(ReturnOp::Subroutine, cpu),
             Instruction::RTR   => rts(ReturnOp::AndRestoreCCR, cpu),
+            // <ea>
+            Instruction::LEA   { op } => lea(op, cpu),
+            Instruction::PEA   { op } => pea(op, cpu),
 
             Instruction::NOP   => {},   // TODO: "does not begin execution until all pending bus cycles have completed."
 
@@ -378,14 +389,12 @@ impl Instruction {
             Instruction::EXT   { op } => todo!(),
             Instruction::NBCD  { op } => todo!(),
             Instruction::SWAP  { op } => todo!(),
-            Instruction::PEA   { op } => todo!(),
             Instruction::TAS   { op } => todo!(),
             Instruction::TST   { op } => todo!(),
 
-            Instruction::LINK  { op } => todo!(),
-            Instruction::UNLK  { op } => todo!(),
+            Instruction::LINK  { op } => link(op, cpu),
+            Instruction::UNLK  { op } => unlk(op, cpu),
 
-            Instruction::LEA   { op } => todo!(),
             Instruction::CHK   { op } => todo!(),
             Instruction::ADDQ  { op } => todo!(),
             Instruction::SUBQ  { op } => todo!(),
@@ -716,7 +725,7 @@ fn decode_opcode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u
                 } else if m_hi == 0b000 {
                     NBCD { op }
                 } else if m_hi == 0b001 {
-                    if m != 0b000 {
+                    if m == 0b000 {
                         SWAP { op }
                     } else {
                         PEA { op }
@@ -1016,6 +1025,28 @@ fn move_from_to(op: u16, cpu: &mut CPU) {
     };
 }
 
+fn lea(op: u16, cpu: &mut CPU) {
+    let am = AddressingMode::decode_op(op);
+    let an: RegisterNum = get_op_xn_hi(op).into();
+
+    assert_valid_am(am, 0b0010011_11011);
+
+    let val = cpu.calculate_am_operand(DataSize::Long, am);
+    // <ea> -> An
+    cpu.reg.write_address(an, DataSize::Long, val);
+}
+
+fn pea(op: u16, cpu: &mut CPU) {
+    let am = AddressingMode::decode_op(op);
+
+    assert_valid_am(am, 0b0010011_11011);
+
+    let val = cpu.calculate_am_operand(DataSize::Long, am);
+    // SP - 4 -> SP;
+    // <ea> -> (SP)
+    cpu.push_sp_long(val);
+}
+
 fn not(op: u16, cpu: &mut CPU) {
     let s = get_op_size(op);
     let am = AddressingMode::decode_op(op);
@@ -1178,8 +1209,7 @@ fn rts(ret_op: ReturnOp, cpu: &mut CPU) {
     // - RTS: 16(4/0)
     // - RTR: 20(5/0)
     // - RTE: 20(5/0)
-    // Dummy read:
-    cpu.read_mem_short(0x0000_0000);
+    cpu.read_mem_short(0x0000_0000);    // +4(1/0) (dummy read)
 
     match ret_op {
         ReturnOp::Exception => {
@@ -1211,4 +1241,40 @@ fn rts(ret_op: ReturnOp, cpu: &mut CPU) {
             cpu.reg.pc = cpu.pop_sp_long();                // +8(2/0)
         },
     }
+}
+
+fn link(op: u16, cpu: &mut CPU) {
+    let an: RegisterNum = get_op_xn_lo(op).into();
+
+    let displacement = if op & 0b0000011001010000 != 0 {
+        // word
+        sign_extend(DataSize::Long, cpu.read_pc_inc_short() as u32)
+    } else {
+        // long (only on mc680x0 where x >= 2)
+        cpu.read_pc_inc_long()
+    };
+
+    // SP - 4 -> SP;
+    // An -> (SP);
+    cpu.push_sp_long(cpu.reg.read_address(an));
+
+    // SP -> An;
+    let sp = cpu.reg.read_address(RegisterNum::R7);
+    cpu.reg.write_address(an, DataSize::Long, sp);
+
+    // SP + d_n -> SP
+    cpu.reg.write_address(RegisterNum::R7, DataSize::Long, sp + displacement);
+}
+
+fn unlk(op: u16, cpu: &mut CPU) {
+    let an: RegisterNum = get_op_xn_lo(op).into();
+
+    let an_val = cpu.reg.read_address(an);
+    // An -> SP;
+    cpu.reg.write_address(RegisterNum::R7, DataSize::Long, an_val);
+
+    // (SP) -> An;
+    // SP + 4 -> SP
+    let val = cpu.pop_sp_long();
+    cpu.reg.write_address(an, DataSize::Long, val);
 }
