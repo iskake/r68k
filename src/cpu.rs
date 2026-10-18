@@ -396,23 +396,26 @@ pub struct CPU {
 
     mmu: MMU,
 
-    data_bus: u16,
+    data_bus: u32,
     addr_bus: u32,
 
     stopped: bool,
+    reset_signal: bool,
 
     cycles: usize,
     read_cycles: usize,
     write_cycles: usize,
 
     pub revision: CPURevision,
+    // Avoids having to match based on revision
+    data_bus_mask: u32,
     addr_bus_mask: u32,
 }
 
 impl CPU {
     pub fn new(rev: CPURevision) -> CPU {
-        let addr_bus_mask = match rev {
-            CPURevision::M68000 => { 0x00ff_ffff },
+        let (data_bus_mask, addr_bus_mask) = match rev {
+            CPURevision::M68000 => { (0x0000_ffff, 0x00ff_ffff) },
             CPURevision::M68010 => todo!("68010 support"),
             CPURevision::M68020 => todo!("68020 support"),
             CPURevision::M68030 => todo!("68030 support"),
@@ -423,13 +426,19 @@ impl CPU {
         CPU {
             reg: Registers::new(),
             mmu: MMU::new(0x1000000),
+
             data_bus: 0,
             addr_bus: 0,
+
             stopped: false,
+            reset_signal: false,
+
             cycles: 0,
             read_cycles: 0,
             write_cycles: 0,
+
             revision: rev,
+            data_bus_mask,
             addr_bus_mask,
         }
     }
@@ -492,8 +501,8 @@ impl CPU {
         );
     }
 
-    fn update_data_bus(&mut self, data: u16) {
-        self.data_bus = data;
+    fn update_data_bus(&mut self, data: u32) {
+        self.data_bus = data & self.data_bus_mask;
     }
 
     fn update_addr_bus(&mut self, addr: u32) {
@@ -517,7 +526,7 @@ impl CPU {
 
     /// Cycles: 4(0/1)
     fn write_mem_byte(&mut self, addr: u32, val: u8) {
-        self.update_data_bus(val as u16);
+        self.update_data_bus(val as u32);
         self.update_addr_bus(addr);
 
         self.write_mem_byte_internal(self.addr_bus, val);
@@ -526,7 +535,7 @@ impl CPU {
 
     /// Cycles: 4(0/1)
     fn write_mem_short(&mut self, addr: u32, val: u16) {
-        self.update_data_bus(val);
+        self.update_data_bus(val as u32);
         self.update_addr_bus(addr);
 
         self.write_mem_short_internal(addr, val);
@@ -535,19 +544,28 @@ impl CPU {
 
     /// Cycles: 8(0/2)
     fn write_mem_long(&mut self, addr: u32, val: u32) {
-        let val_hi = ((val & 0xffff_0000) >> 16) as u16;
-        let val_lo = (val & 0x0000_ffff) as u16;
+        if self.data_bus_mask & 0x8000_0000 == 0 {
+            // 16-bit data bus
+            let val_hi = ((val & 0xffff_0000) >> 16) as u16;
+            let val_lo = (val & 0x0000_ffff) as u16;
 
-        self.update_addr_bus(addr);
-        self.update_data_bus(val_hi);
+            self.update_addr_bus(addr);
+            self.update_data_bus(val_hi as u32);
 
-        self.write_mem_short_internal(addr, val_hi);
-        self.cycle_write();
+            self.write_mem_short_internal(addr, val_hi);
+            self.cycle_write();
 
-        self.update_data_bus(val_lo);
+            self.update_data_bus(val_lo as u32);
 
-        self.write_mem_short_internal(addr+2, val_lo);
-        self.cycle_write();
+            self.write_mem_short_internal(addr+2, val_lo);
+            self.cycle_write();
+        } else {
+            self.update_data_bus(val);
+            self.update_addr_bus(addr);
+            self.write_mem_long(addr, val);
+            // TODO: do the true 32bit cpus use 1 read/write cycle for longs?
+            self.cycle_write();
+        }
     }
 
     /// Write a byte/word/long (based on the `size`) to address `addr`
@@ -589,7 +607,7 @@ impl CPU {
 
         let val = self.read_mem_byte_internal(addr & self.addr_bus_mask);
 
-        self.update_data_bus(val as u16);
+        self.update_data_bus(val as u32);
         self.cycle_read();
 
         val
@@ -601,7 +619,7 @@ impl CPU {
 
         let val = self.read_mem_short_internal(addr & self.addr_bus_mask);
 
-        self.update_data_bus(val);
+        self.update_data_bus(val as u32);
         self.cycle_read();
 
         val
@@ -609,19 +627,30 @@ impl CPU {
 
     /// Cycles: 8(2/0)
     fn read_mem_long(&mut self, addr: u32) -> u32 {
-        self.update_addr_bus(addr);
+        if self.data_bus_mask & 0x8000_0000 == 0 {
+            // 16-bit data bus
+            self.update_addr_bus(addr);
 
-        let val_hi = self.read_mem_short_internal(addr & self.addr_bus_mask) as u32;
+            let val_hi = self.read_mem_short_internal(addr & self.addr_bus_mask) as u32;
 
-        self.update_data_bus(val_hi as u16);
-        self.cycle_read();
+            self.update_data_bus(val_hi);
+            self.cycle_read();
 
-        let val_lo = self.read_mem_short_internal((addr+2) & self.addr_bus_mask) as u32;
+            let val_lo = self.read_mem_short_internal((addr+2) & self.addr_bus_mask) as u32;
 
-        self.update_data_bus(val_lo as u16);
-        self.cycle_read();
+            self.update_data_bus(val_lo);
+            self.cycle_read();
 
-        (val_hi << 16) | val_lo
+            (val_hi << 16) | val_lo
+        } else {
+            self.update_addr_bus(addr);
+            let val = self.read_mem_long_internal(addr);
+            self.update_data_bus(val);
+            // TODO: do the true 32bit cpus use 1 read/write cycle for longs?
+            self.cycle_read();
+
+            val
+        }
     }
 
     /// Read a byte/word/long (based on the `size`) at address `addr`

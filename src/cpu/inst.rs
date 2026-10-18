@@ -350,7 +350,7 @@ impl Instruction {
             Instruction::TRAP  { op } => trap(op, cpu),
             Instruction::TRAPV => trapv(cpu),
             Instruction::ILLEGAL { op } => trap_illegal(op, cpu),
-            Instruction::RESET => todo!(),
+            Instruction::RESET => reset(cpu),
             Instruction::STOP  => stop(cpu),
             // jumps
             Instruction::JSR   { op } => jmp(op, cpu),
@@ -1125,6 +1125,25 @@ fn stop(cpu: &mut CPU) {
         let imm_data = cpu.read_pc_inc_short(); // +4(1/0)
         cpu.reg.sr.modify_sr(imm_data);
         cpu.stopped = true;
+    } else {
+        trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
+    }
+}
+
+fn reset(cpu: &mut CPU) {
+    if cpu.reg.sr.supervisor_state() {
+        let assert_cycles = match cpu.revision {
+            CPURevision::M68000 | CPURevision::M68010 => 124,
+            _ => 512,
+        };
+
+        // Total cycles incl. opcode fetch should be 132 (on mc68000).
+        //? Should this happen before or after the other cycles?
+        cpu.cycle(4);
+
+        cpu.reset_signal = true;
+        cpu.cycle(assert_cycles);   // +124(0/0) / +512(0/0)
+        cpu.reset_signal = false;
     } else {
         trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
     }
