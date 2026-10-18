@@ -1034,6 +1034,8 @@ fn not(op: u16, cpu: &mut CPU) {
 
 /// Cycles: 30(3/3)
 fn trap_vec(vector_num: u8, cpu: &mut CPU) {
+    cpu.reg.sr.set_supervisor();
+
     if cpu.revision != CPURevision::M68000 {
         // As is written elsewhere:
         // "The MC68000 and MC68008 do not write vector offset or
@@ -1042,20 +1044,18 @@ fn trap_vec(vector_num: u8, cpu: &mut CPU) {
         // SSP - 2 -> SSP
         cpu.cycle(2);   // ?
         let format_offset = todo!("Format/offset -> (SSP)");
-        cpu.push_ssp_short(format_offset);  // +4(0/1) => 4(0/1)
+        cpu.push_sp_short(format_offset);  // +4(0/1) => 4(0/1)
     }
 
     // PC -> (SSP)
     // SSP - 4 -> SSP
     cpu.cycle(2);   // ?
-    cpu.push_ssp_long(cpu.reg.pc);        // +8(0/2) => ??(1/2)
+    cpu.push_sp_long(cpu.reg.pc);        // +8(0/2) => ??(1/2)
 
     // SR -> (SSP)
     // SSP - 2 -> SSP
     cpu.cycle(2);   // ?
-    cpu.push_ssp_short(cpu.reg.sr.sr());  // +4(0/1) => ??(1/3)
-
-    cpu.reg.sr.set_supervisor();
+    cpu.push_sp_short(cpu.reg.sr.sr());  // +4(0/1) => ??(1/3)
 
     // (Vector) -> PC
     cpu.reg.pc = cpu.read_mem_long(vector_num as u32 * CPU_VECTOR_SIZE);// +8(2/0) => 30(3/3)  (r/w => 24)
@@ -1068,6 +1068,9 @@ fn trapv(cpu: &mut CPU) {
 }
 
 fn trap(op: u16, cpu: &mut CPU) {
+    // 1 -> S-bit of SR
+    cpu.reg.sr.set_supervisor();
+
     let v = (op & 0xf) as u32;
 
     if cpu.revision != CPURevision::M68000 {
@@ -1076,20 +1079,15 @@ fn trap(op: u16, cpu: &mut CPU) {
         // SSP - 2 -> SSP
         // Format/Offset -> (SSP)
         let format_offset = todo!("Format/offset -> (SSP)");
-        cpu.push_ssp_short(format_offset);
+        cpu.push_sp_short(format_offset);
     }
 
     // SSP-4 -> SSP
     // PC -> (SSP)
-    cpu.push_ssp_long(cpu.reg.pc);       // +8(0/2)
+    cpu.push_sp_long(cpu.reg.pc);       // +8(0/2)
     // SSP - 2 -> SSP
     // SR -> (SSP)
-    cpu.push_ssp_short(cpu.reg.sr.sr()); // +4(0/1)
-
-    // ? The programmers reference manual provides this as the top operation,
-    // ? but then `rte` (when popping the stack) would not disable the supervisor state
-    // 1 -> S-bit of SR
-    cpu.reg.sr.set_supervisor();
+    cpu.push_sp_short(cpu.reg.sr.sr()); // +4(0/1)
 
     // Vector Address -> PC
     let vector_addr = v * CPU_VECTOR_SIZE + 32 * CPU_VECTOR_SIZE;
@@ -1100,21 +1098,23 @@ fn trap(op: u16, cpu: &mut CPU) {
 fn trap_illegal(op: u16, cpu: &mut CPU) {
     println!("illegal instruction ({op:016b})");
 
+    cpu.reg.sr.set_supervisor();
+
     if cpu.revision != CPURevision::M68000 {
         // "The MC68000 and MC68008 cannot write vector offset and 
         // format code to the system stack"
         // SSP - 2 -> SSP
         // Vector offset -> (SSP)
         let vector_offset = todo!("Vector offset -> (SSP)");
-        cpu.push_ssp_short(vector_offset);
+        cpu.push_sp_short(vector_offset);
     }
 
     // SSP - 4 -> SSP;
     // PC -> (SSP);
-    cpu.push_ssp_long(cpu.reg.pc);              // +8(0/2)
+    cpu.push_sp_long(cpu.reg.pc);              // +8(0/2)
     // SSP - 2 -> SSP;
     // SR -> (SSP);
-    cpu.push_ssp_short(cpu.reg.sr.sr());        // +4(0/1)
+    cpu.push_sp_short(cpu.reg.sr.sr());        // +4(0/1)
     // Illegal Instruction Vector Address -> PC
     let vector_addr = CPUVector::IllegalInstruction as u32 * CPU_VECTOR_SIZE;
     cpu.reg.pc = cpu.read_mem_long(vector_addr);    // +8(2/0)
@@ -1165,7 +1165,7 @@ fn jmp(op: u16, cpu: &mut CPU) {
         // SP - 4 -> SP;
         // PC -> (SP);
         // TODO?: should this happen before or after am operand calculation?
-        cpu.push_usp_long(cpu.reg.pc);  // + 8(0/2)
+        cpu.push_sp_long(cpu.reg.pc);  // + 8(0/2)
     }
 
     // Destination Address -> PC
@@ -1186,11 +1186,11 @@ fn rts(ret_op: ReturnOp, cpu: &mut CPU) {
             if cpu.reg.sr.supervisor_state() {
                 // (SP) -> SR;
                 // SP + 2 -> PC;
-                let val = cpu.pop_usp_short();
+                let val = cpu.pop_sp_short();
                 cpu.reg.sr.modify_sr(val);  // +4(1/0)
                 // SP + 4 -> SP;
                 // Restore state and deallocate stack according to (SP)
-                let old_state = cpu.pop_usp_long();         // +8(2/0)
+                let old_state = cpu.pop_sp_long();         // +8(2/0)
                 todo!("rte with {old_state:08x}");
             } else {
                 trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
@@ -1199,18 +1199,16 @@ fn rts(ret_op: ReturnOp, cpu: &mut CPU) {
         ReturnOp::Subroutine => {
             // (SP) -> PC;
             // SP + 4 -> SP
-            println!("RTS");
-            cpu.reg.pc = cpu.pop_usp_long();    // +8(2/0)
-            println!("set PC to: {:08x}", cpu.reg.pc);
+            cpu.reg.pc = cpu.pop_sp_long();    // +8(2/0)
         },
         ReturnOp::AndRestoreCCR => {
             // (SP) -> CCR;
             // SP + 2 -> SP
-            let val = cpu.pop_usp_short();
+            let val = cpu.pop_sp_short();
             cpu.reg.sr.modify_ccr(val); // +4(1/0)
             // (SP) -> PC;
             // SP + 4 -> SP
-            cpu.reg.pc = cpu.pop_usp_long();                // +8(2/0)
+            cpu.reg.pc = cpu.pop_sp_long();                // +8(2/0)
         },
     }
 }

@@ -282,6 +282,7 @@ impl Registers {
         }
     }
 
+    /// Read data register dn (d0-d7)
     fn read_data(&self, dn: RegisterNum) -> u32 {
         match dn {
             RegisterNum::R0 => self.d0,
@@ -295,6 +296,7 @@ impl Registers {
         }
     }
 
+    /// Read address register an (a0-a7)
     fn read_address(&self, an: RegisterNum, supervisor: bool) -> u32 {
         match an {
             RegisterNum::R0 => self.a0,
@@ -308,6 +310,7 @@ impl Registers {
         }
     }
 
+    /// Write data register dn (d0-d7)
     fn write_data(&mut self, dn: RegisterNum, size: DataSize, val: u32) {
         let s: usize = size.into();
 
@@ -323,6 +326,7 @@ impl Registers {
         }
     }
 
+    /// Write a byte value to data register dn (d0-d7) with a given offset
     fn write_data_byte_offset(&mut self, dn: RegisterNum, byte_offset: u32, val: u8) {
         let mask = 0xffff_ffffu32 ^ (0xff << (byte_offset * 8));
 
@@ -338,6 +342,7 @@ impl Registers {
         }
     }
 
+    /// Write address register an (a0-a7)
     fn write_address(&mut self, an: RegisterNum, size: DataSize, val: u32) {
         let s: usize = size.into();
 
@@ -353,6 +358,7 @@ impl Registers {
         }
     }
 
+    /// Increment address register an (a0-a7) by sizeof(byte/word/long)
     fn inc_address(&mut self, an: RegisterNum, size: DataSize) {
         match an {
             RegisterNum::R0 => self.a0  += size.sizeof() as u32,
@@ -366,6 +372,7 @@ impl Registers {
         }
     }
 
+    /// Decrement address register an (a0-a7) by sizeof(byte/word/long)
     fn dec_address(&mut self, an: RegisterNum, size: DataSize) {
         match an {
             RegisterNum::R0 => self.a0  -= size.sizeof() as u32,
@@ -893,81 +900,58 @@ impl CPU {
     /// Push an element on top of the (user) stack.
     /// Decreases the user stack pointer (a7 / usp) by 2.
     /// 
+    /// ```p
+    /// SP - 2 -> SP
+    /// val -> (SP);
+    /// ```
+    /// 
     /// Cycles: 4(0/1)
-    pub fn push_usp_short(&mut self, val: u16) {
-        self.reg.usp -= 2;
+    pub fn push_sp_short(&mut self, val: u16) {
+        self.reg.dec_address(RegisterNum::R7, DataSize::Word);
         self.write_mem_short(self.reg.usp, val)
     }
 
     /// Push an element on top of the (user) stack.
     /// Decreases the user stack pointer (a7 / usp) by 4.
     /// 
+    /// ```p
+    /// SP - 4 -> SP
+    /// val -> (SP);
+    /// ```
+    /// 
     /// Cycles: 8(0/2)
-    pub fn push_usp_long(&mut self, val: u32) {
-        self.reg.usp -= 4;
+    pub fn push_sp_long(&mut self, val: u32) {
+        self.reg.dec_address(RegisterNum::R7, DataSize::Long);
         self.write_mem_long(self.reg.usp, val)
     }
 
     /// Pop an element from the top of the (user) stack.
     /// Increases the user stack pointer (a7 / usp) by 4.
     /// 
+    /// ```p
+    /// (SP) -> val;
+    /// SP + 2 -> SP
+    /// ```
+    /// 
     /// Cycles: 4(2/0)
-    pub fn pop_usp_short(&mut self) -> u16 {
+    pub fn pop_sp_short(&mut self) -> u16 {
         let res = self.read_mem_short(self.reg.usp);
-        self.reg.usp += 2;
+        self.reg.inc_address(RegisterNum::R7, DataSize::Word);
         res
     }
 
     /// Pop an element from the top of the (user) stack.
     /// Increases the user stack pointer (a7 / usp) by 4.
     /// 
-    /// ```
+    /// ```p
     /// (SP) -> val;
     /// SP + 4 -> SP
     /// ```
     /// 
     /// Cycles: 8(2/0)
-    pub fn pop_usp_long(&mut self) -> u32 {
+    pub fn pop_sp_long(&mut self) -> u32 {
         let res = self.read_mem_long(self.reg.usp);
-        self.reg.usp += 4;
-        res
-    }
-
-    /// Push an element on top of the (supervisor) stack.
-    /// Decreases the supervisor stack pointer (ssp) by 2.
-    /// 
-    /// Cycles: 4(0/1)
-    pub fn push_ssp_short(&mut self, val: u16) {
-        self.reg.ssp -= 2;
-        self.write_mem_short(self.reg.ssp, val)
-    }
-
-    /// Push an element on top of the (supervisor) stack.
-    /// Decreases the supervisor stack pointer (ssp) by 4.
-    /// 
-    /// Cycles: 8(0/2)
-    pub fn push_ssp_long(&mut self, val: u32) {
-        self.reg.ssp -= 4;
-        self.write_mem_long(self.reg.ssp, val)
-    }
-
-    /// Pop an element from the top of the (supervisor) stack.
-    /// Increases the supervisor stack pointer (ssp) by 2.
-    /// 
-    /// Cycles: 4(2/0)
-    pub fn pop_ssp_short(&mut self) -> u16 {
-        let res = self.read_mem_short(self.reg.ssp);
-        self.reg.ssp += 2;
-        res
-    }
-
-    /// Pop an element from the top of the (supervisor) stack.
-    /// Increases the supervisor stack pointer (ssp) by 2.
-    /// 
-    /// Cycles: 8(2/0)
-    pub fn pop_ssp_long(&mut self) -> u32 {
-        let res = self.read_mem_long(self.reg.ssp);
-        self.reg.ssp += 4;
+        self.reg.inc_address(RegisterNum::R7, DataSize::Long);
         res
     }
 
