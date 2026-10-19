@@ -1,7 +1,4 @@
-pub const SIZE_MASK_LOWER: [u32; 3] = [0x0000_00ff, 0x0000_ffff, 0xffff_ffff];
-pub const SIZE_MASK_UPPER: [u32; 3] = [0xffff_ff00, 0xffff_0000, 0x0000_0000];
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataSize {
     Byte,
     Word,
@@ -19,11 +16,33 @@ impl std::fmt::Display for DataSize {
 }
 
 impl DataSize {
+    /// Size of the given data size in bytes
+    /// 
+    /// |Size |sizeof |
+    /// |-----|-------|
+    /// |byte |     1 |
+    /// |word |     2 |
+    /// |long |     4 |
     pub fn sizeof(self) -> usize {
         match self {
             DataSize::Byte => 1,
             DataSize::Word => 2,
             DataSize::Long => 4,
+        }
+    }
+
+    /// 32-bit bitmask of the given data size.
+    /// 
+    /// |Size | Mask         |
+    /// |-----|--------------|
+    /// |byte | `0xff`       |
+    /// |word | `0xffff`     |
+    /// |long | `0xffffffff`|
+    pub fn mask(self) -> u32 {
+        match self {
+            DataSize::Byte => 0x0000_00ff,
+            DataSize::Word => 0x0000_ffff,
+            DataSize::Long => 0xffff_ffff,
         }
     }
 }

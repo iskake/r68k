@@ -1,4 +1,4 @@
-use crate::{bits::{DataSize, SIZE_MASK_LOWER, SIZE_MASK_UPPER, SignExtend}, cpu::inst::AddressingMode, mmu::MMU};
+use crate::{bits::{DataSize, SignExtend}, cpu::inst::AddressingMode, mmu::MMU};
 
 mod inst;
 
@@ -312,17 +312,17 @@ impl Registers {
 
     /// Write data register dn (d0-d7)
     fn write_data(&mut self, dn: RegisterNum, size: DataSize, val: u32) {
-        let s: usize = size.into();
+        let mask = size.mask();
 
         match dn {
-            RegisterNum::R0 => self.d0 = (self.d0 & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
-            RegisterNum::R1 => self.d1 = (self.d1 & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
-            RegisterNum::R2 => self.d2 = (self.d2 & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
-            RegisterNum::R3 => self.d3 = (self.d3 & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
-            RegisterNum::R4 => self.d4 = (self.d4 & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
-            RegisterNum::R5 => self.d5 = (self.d5 & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
-            RegisterNum::R6 => self.d6 = (self.d6 & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
-            RegisterNum::R7 => self.d7 = (self.d7 & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+            RegisterNum::R0 => self.d0 = (self.d0 & !mask) | (val & mask),
+            RegisterNum::R1 => self.d1 = (self.d1 & !mask) | (val & mask),
+            RegisterNum::R2 => self.d2 = (self.d2 & !mask) | (val & mask),
+            RegisterNum::R3 => self.d3 = (self.d3 & !mask) | (val & mask),
+            RegisterNum::R4 => self.d4 = (self.d4 & !mask) | (val & mask),
+            RegisterNum::R5 => self.d5 = (self.d5 & !mask) | (val & mask),
+            RegisterNum::R6 => self.d6 = (self.d6 & !mask) | (val & mask),
+            RegisterNum::R7 => self.d7 = (self.d7 & !mask) | (val & mask),
         }
     }
 
@@ -344,26 +344,28 @@ impl Registers {
 
     /// Write address register an (a0-a7)
     fn write_address(&mut self, an: RegisterNum, size: DataSize, val: u32) {
-        let s: usize = size.into();
+        assert_ne!(size, DataSize::Byte);
+        let mask = size.mask();
 
         match an {
-            RegisterNum::R0 => self.a0  = (self.a0  & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
-            RegisterNum::R1 => self.a1  = (self.a1  & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
-            RegisterNum::R2 => self.a2  = (self.a2  & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
-            RegisterNum::R3 => self.a3  = (self.a3  & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
-            RegisterNum::R4 => self.a4  = (self.a4  & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
-            RegisterNum::R5 => self.a5  = (self.a5  & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
-            RegisterNum::R6 => self.a6  = (self.a6  & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s]),
+            RegisterNum::R0 => self.a0  = (self.a0  & !mask) | (val & mask),
+            RegisterNum::R1 => self.a1  = (self.a1  & !mask) | (val & mask),
+            RegisterNum::R2 => self.a2  = (self.a2  & !mask) | (val & mask),
+            RegisterNum::R3 => self.a3  = (self.a3  & !mask) | (val & mask),
+            RegisterNum::R4 => self.a4  = (self.a4  & !mask) | (val & mask),
+            RegisterNum::R5 => self.a5  = (self.a5  & !mask) | (val & mask),
+            RegisterNum::R6 => self.a6  = (self.a6  & !mask) | (val & mask),
             RegisterNum::R7 => if self.sr.supervisor_state() {
-                self.ssp = (self.ssp & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s])
+                self.ssp = (self.ssp & !mask) | (val & mask)
             } else {
-                self.usp = (self.usp & SIZE_MASK_UPPER[s]) | (val & SIZE_MASK_LOWER[s])
+                self.usp = (self.usp & !mask) | (val & mask)
             },
         }
     }
 
     /// Increment address register an (a0-a7) by sizeof(byte/word/long)
     fn inc_address(&mut self, an: RegisterNum, size: DataSize) {
+        assert_ne!(size, DataSize::Byte);
         match an {
             RegisterNum::R0 => self.a0  += size.sizeof() as u32,
             RegisterNum::R1 => self.a1  += size.sizeof() as u32,
@@ -382,6 +384,7 @@ impl Registers {
 
     /// Decrement address register an (a0-a7) by sizeof(byte/word/long)
     fn dec_address(&mut self, an: RegisterNum, size: DataSize) {
+        assert_ne!(size, DataSize::Byte);
         match an {
             RegisterNum::R0 => self.a0  -= size.sizeof() as u32,
             RegisterNum::R1 => self.a1  -= size.sizeof() as u32,
@@ -855,9 +858,12 @@ impl CPU {
             // Cycle counts c(r/w)
             // .b, .w | .l
             // 0(0/0) | 0(0/0)
-            AddressingMode::DataReg(dn) => self.reg.read_data(dn),
+            AddressingMode::DataReg(dn) => self.reg.read_data(dn) & size.mask(),
             // 0(0/0) | 0(0/0)
-            AddressingMode::AddrReg(an) => self.reg.read_address(an),
+            AddressingMode::AddrReg(an) => {
+                assert_ne!(size, DataSize::Byte);
+                self.reg.read_address(an) & size.mask()
+            },
             // 4(1/0) | 8(2/0)
             AddressingMode::Imm => {
                 match size {
