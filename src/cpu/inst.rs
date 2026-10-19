@@ -373,9 +373,9 @@ impl Display for Instruction {
                 }
             },
             MOVEQ { op } => write!(f, "moveq #0x{:02x}", op & 0xff),
-            MOVEFromSR{ op } => write!(f, "MOVE sr,{}", AddressingMode::decode_op(*op)),
-            MOVEToCCR { op } => write!(f, "MOVE {},ccr", AddressingMode::decode_op(*op)),
-            MOVEToSR  { op } => write!(f, "MOVE {},sr", AddressingMode::decode_op(*op)),
+            MOVEFromSR{ op } => write!(f, "move.w sr,{}", AddressingMode::decode_op(*op)),
+            MOVEToCCR { op } => write!(f, "move.w {},ccr", AddressingMode::decode_op(*op)),
+            MOVEToSR  { op } => write!(f, "move.w {},sr", AddressingMode::decode_op(*op)),
             MOVEUSP {op} => {
                 let an = get_op_xn_lo(*op);
                 if op & 0b1000 == 0 {
@@ -490,7 +490,7 @@ impl Instruction {
         match self {
             // move
             Instruction::MOVEP { op } => movep(op, cpu),
-            Instruction::MOVEA { op } => move_(op, cpu),
+            Instruction::MOVEA { op } => movea(op, cpu),
             Instruction::MOVE  { op } => move_(op, cpu),
             Instruction::MOVEFromSR { op } => move_from_sr(op, cpu),
             Instruction::MOVEToCCR  { op } => move_to_ccr(op, cpu),
@@ -995,7 +995,6 @@ fn assert_valid_am(am: AddressingMode, mask: u32) {
     assert!(valid, "Invalid addressing mode {am}");
 }
 
-
 fn move_(op: u16, cpu: &mut CPU) {
     let s = get_op_size_move(op);
     let am_src = AddressingMode::decode_op(op);
@@ -1004,7 +1003,7 @@ fn move_(op: u16, cpu: &mut CPU) {
     let xn_hi = get_op_xn_hi(op);
     let m_hi = get_op_m_hi(op);
     let am_dst = AddressingMode::decode(m_hi, xn_hi);
-    assert_valid_am(am_dst, 0b1111111_11000);
+    assert_valid_am(am_dst, 0b1011111_11000);
 
     let src_val = cpu.read_am(s, am_src);
     cpu.write_am(s, am_dst, src_val);
@@ -1013,6 +1012,23 @@ fn move_(op: u16, cpu: &mut CPU) {
     cpu.reg.sr.modify_z(is_zero(src_val, s));
     cpu.reg.sr.clear_v();
     cpu.reg.sr.clear_c();
+}
+
+fn movea(op: u16, cpu: &mut CPU) {
+    let s = get_op_size_move(op);
+    let am_src = AddressingMode::decode_op(op);
+    // Same as move; no need to assert validity of source
+
+    let an = get_op_xn_hi(op).into();
+
+    let val = cpu.read_am(s, am_src);
+    let src_val = if let DataSize::Word = s {
+        sign_extend_word(val as u16)
+    } else {
+        val
+    };
+
+    cpu.reg.write_address(an, DataSize::Long, src_val);
 }
 
 fn moveq(op: u16, cpu: &mut CPU) {
