@@ -32,31 +32,25 @@ fn tmp_load_program(obj_file_path_str: &str, cpu: &mut CPU) {
     let slice = data.as_slice();
     let file = ElfBytes::<AnyEndian>::minimal_parse(slice).unwrap();
 
-    let vectors_header = file
-        .section_header_by_name(".vectors")
-        .expect("section table header could not be parsed")
-        .expect("no .vectorsheader found");
+    write_section_if_exists(cpu, &file, ".vectors");
+    write_section_if_exists(cpu, &file, ".text");
+    write_section_if_exists(cpu, &file, ".text.startup");   // ?
+}
 
-    let (vectors, _) = file
-        .section_data(&vectors_header)
+fn write_section_if_exists(cpu: &mut CPU, file: &ElfBytes<'_, AnyEndian>, section_name: &str) {
+    let Ok(Some(header)) = file
+        .section_header_by_name(section_name) else {
+        println!("Failed to parse section header of section '{section_name}'");
+        return;
+    };
+
+    let addr = header.sh_addr;
+    let (data, _) = file
+        .section_data(&header)
         .expect("section header does not exist");
 
-    let offset = 0x0000_0000;
-    for (i, b) in vectors.iter().enumerate() {
-        cpu.write_mem_byte_internal(i as u32 + offset, *b);
+    for (i, b) in data.iter().enumerate() {
+        cpu.write_mem_byte_internal(addr as u32 + i as u32, *b);
     }
-
-    let text_header = file
-        .section_header_by_name(".text")
-        .expect("section table header could not be parsed")
-        .expect("no .text header found");
-
-    let offset = 0x0001_0000;
-    let (text, _) = file
-        .section_data(&text_header)
-        .expect("section header does not exist");
-
-    for (i, b) in text.iter().enumerate() {
-        cpu.write_mem_byte_internal(i as u32 + offset, *b);
-    }
+    println!("Wrote section '{}' to address 0x{:08x}", section_name, addr);
 }
