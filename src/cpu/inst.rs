@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::{bits::{DataSize, is_negative, is_zero, sign_extend, sign_extend_byte}, cpu::{CPU, CPURevision, CPUVector, RegisterNum, CPU_VECTOR_SIZE}};
+use crate::{bits::{DataSize, is_negative, is_zero, sign_extend_word, sign_extend_byte}, cpu::{CPU, CPURevision, CPUVector, RegisterNum, CPU_VECTOR_SIZE}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Condition {
@@ -1068,7 +1068,7 @@ fn movem(op: u16, cpu: &mut CPU) {
                     }
                 };
                 let val = if let DataSize::Word = size {
-                    sign_extend(DataSize::Long, w)
+                    sign_extend_word(w as u16)
                 } else {
                     w
                 };
@@ -1356,7 +1356,7 @@ fn jmp(op: u16, cpu: &mut CPU) {
 /// Cycles: .b, .w: +4(1/0) | .l: +8(2/0)
 fn get_displacement_no_inc(cpu: &mut CPU, disp_tmp: u16) -> i32 {
     if disp_tmp == 0x00 { 
-        sign_extend(DataSize::Long, cpu.read_pc_short() as u32) as i32  // +4(1/0)
+        sign_extend_word(cpu.read_pc_short()) as i32  // +4(1/0)
     } else if disp_tmp == 0xff
         && (cpu.revision == CPURevision::M68020
         ||  cpu.revision == CPURevision::M68030
@@ -1430,7 +1430,7 @@ fn dbcc(op: u16, cpu: &mut CPU) {
 
         if cpu.reg.read_data(dn) & 0xffff == 0xffff {
             // branch taken => cycs: 10(2/0)
-            let displacement = sign_extend(DataSize::Long, disp as u32) as i32;
+            let displacement = sign_extend_word(disp) as i32;
 
             // PC + d_n -> PC
             cpu.reg.pc = cpu.reg.pc.wrapping_add_signed(displacement);
@@ -1495,7 +1495,7 @@ fn link(op: u16, cpu: &mut CPU) {
 
     let displacement = if op & 0b0000011001010000 != 0 {
         // word
-        sign_extend(DataSize::Long, cpu.read_pc_inc_short() as u32) // +4(1/0)
+        sign_extend_word(cpu.read_pc_inc_short()) // +4(1/0)
     } else {
         // long (only on mc680x0 where x >= 2)
         cpu.read_pc_inc_long()  //

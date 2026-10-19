@@ -90,16 +90,13 @@ pub fn is_negative(val: u32, size: DataSize) -> bool {
 }
 
 /// Sign-extend a byte to a long
+#[inline(always)]
 pub fn sign_extend_byte(val: u8) -> u32 {
-    let v = val as u32;
-    (0xffff_ff00 << ((!v & 0x80) >> 7) * 16) | (v & 0xff)
+    val as i8 as i32 as u32
 }
 
-/// Sign extend a byte to a word or a word to a long
-pub fn sign_extend(to_size: DataSize, val: u32) -> u32 {
-    match to_size {
-        DataSize::Byte => panic!("Cannot sign-extend with .b"),
-        DataSize::Word => ((0xff00 << ((!val & 0x80) >> 7) * 8) | (val & 0xff)) & 0xffff,
-        DataSize::Long => (0xffff_0000 << ((!val & 0x8000) >> 15) * 16) | (val & 0xffff),
-    }
+/// Sign extend a word to a long
+#[inline(always)]
+pub fn sign_extend_word(val: u16) -> u32 {
+    val as i16 as i32 as u32
 }

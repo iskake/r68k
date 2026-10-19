@@ -1,4 +1,4 @@
-use crate::{bits::{DataSize, SIZE_MASK_LOWER, SIZE_MASK_UPPER, sign_extend, sign_extend_byte}, cpu::inst::AddressingMode, mmu::MMU};
+use crate::{bits::{DataSize, SIZE_MASK_LOWER, SIZE_MASK_UPPER, sign_extend_word, sign_extend_byte}, cpu::inst::AddressingMode, mmu::MMU};
 
 mod inst;
 
@@ -740,7 +740,7 @@ impl CPU {
             // 8(2/0) | 12(3/0)
             AddressingMode::AddrDisplace(an) => {
                 let r = self.reg.read_address(an);
-                let d = sign_extend(DataSize::Long, self.read_pc_inc_short() as u32);
+                let d = sign_extend_word(self.read_pc_inc_short());
                 let addr = r + d;
                 addr
             },
@@ -760,7 +760,7 @@ impl CPU {
                 };
 
                 let x_val = match s {
-                    DataSize::Word => sign_extend(DataSize::Long, x_reg_val),
+                    DataSize::Word => sign_extend_word(x_reg_val as u16),
                     DataSize::Long => x_reg_val,
                     _ => unreachable!()
                 };
@@ -775,7 +775,7 @@ impl CPU {
             // 8(2/0) | 12(3/0)
             AddressingMode::PCDisplace => {
                 let pc = self.reg.pc;
-                let d = sign_extend(DataSize::Long, self.read_pc_inc_short() as u32);
+                let d = sign_extend_word(self.read_pc_inc_short());
                 let addr = pc + d;
 
                 addr
@@ -797,7 +797,7 @@ impl CPU {
                 };
 
                 let x_val = match s {
-                    DataSize::Word => sign_extend(DataSize::Long, x_reg_val),
+                    DataSize::Word => sign_extend_word(x_reg_val as u16),
                     DataSize::Long => x_reg_val,
                     _ => unreachable!()
                 };
@@ -812,7 +812,7 @@ impl CPU {
             // 8(2/0) | 12(3/0)
             AddressingMode::AbsShort => {
                 // ?
-                let addr = sign_extend(DataSize::Long, self.read_pc_inc_short() as u32);
+                let addr = sign_extend_word(self.read_pc_inc_short());
 
                 addr
             },
