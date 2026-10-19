@@ -715,9 +715,9 @@ impl CPU {
             // Cycle counts c(r/w)
             // .b, .w | .l
             // 0(0/0) | 0(0/0)
-            AddressingMode::DataReg(dn) => 0,
+            AddressingMode::DataReg(_) => 0,
             // 0(0/0) | 0(0/0)
-            AddressingMode::AddrReg(an) => 0,
+            AddressingMode::AddrReg(_) => 0,
             // 4(1/0) | 8(2/0)
             AddressingMode::Addr(an) => self.reg.read_address(an),
             // 4(1/0) | 8(2/0)

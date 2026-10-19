@@ -229,13 +229,18 @@ pub enum Instruction {
     ADDI  { op: u16 },
     EORI  { op: u16 },
     CMPI  { op: u16 },
-    BTST  { op: u16 }, // == BTST, BCHG, BCLR, BSET
+    BTST  { op: u16 },
+    BCHG  { op: u16 },
+    BCLR  { op: u16 },
+    BSET  { op: u16 },
     MOVEP { op: u16 },
     // 00ss
     MOVEA { op: u16 },
     MOVE  { op: u16 },
     // 0100
-    MOVEToFrom { op: u16 },
+    MOVEFromSR { op: u16 },
+    MOVEToCCR  { op: u16 },
+    MOVEToSR   { op: u16 },
     NEGX { op: u16 },
     CLR  { op: u16 },
     NEG  { op: u16 },
@@ -319,6 +324,9 @@ impl Display for Instruction {
             EORI  { op } => todo!(),
             CMPI  { op } => todo!(),
             BTST  { op } => todo!(),
+            BCHG  { op } => todo!(),
+            BCLR  { op } => todo!(),
+            BSET  { op } => todo!(),
 
             // moves
             MOVEP { op } => {
@@ -365,7 +373,9 @@ impl Display for Instruction {
                 }
             },
             MOVEQ { op } => write!(f, "moveq #0x{:02x}", op & 0xff),
-            MOVEToFrom { op } => todo!(),
+            MOVEFromSR{ op } => write!(f, "MOVE sr,{}", AddressingMode::decode_op(*op)),
+            MOVEToCCR { op } => write!(f, "MOVE {},ccr", AddressingMode::decode_op(*op)),
+            MOVEToSR  { op } => write!(f, "MOVE {},sr", AddressingMode::decode_op(*op)),
 
             NEGX  { op } => todo!(),
             CLR   { op } => todo!(),
@@ -473,7 +483,9 @@ impl Instruction {
             Instruction::MOVEP { op } => movep(op, cpu),
             Instruction::MOVEA { op } => move_(op, cpu),
             Instruction::MOVE  { op } => move_(op, cpu),
-            Instruction::MOVEToFrom { op } => move_from_to(op, cpu),
+            Instruction::MOVEFromSR { op } => move_from_sr(op, cpu),
+            Instruction::MOVEToCCR  { op } => move_to_ccr(op, cpu),
+            Instruction::MOVEToSR   { op } => move_to_sr(op, cpu),
             Instruction::MOVEQ { op } => moveq(op, cpu),
             Instruction::MOVEM { op } => movem(op, cpu),
             Instruction::MOVEUSP { op } => todo!(),
@@ -487,14 +499,14 @@ impl Instruction {
             Instruction::JSR   { op } => jmp(op, cpu),
             Instruction::JMP   { op } => jmp(op, cpu),
             // branch
-            Instruction::DBcc  { op } => bra(op, cpu),
+            Instruction::DBcc  { op } => dbcc(op, cpu),
             Instruction::BRA   { op } => bra(op, cpu),
-            Instruction::BSR   { op } => bra(op, cpu),
-            Instruction::Bcc   { op } => bra(op, cpu),
+            Instruction::BSR   { op } => bsr(op, cpu),
+            Instruction::Bcc   { op } => bcc(op, cpu),
             // returns
-            Instruction::RTE   => rts(ReturnOp::Exception, cpu),
-            Instruction::RTS   => rts(ReturnOp::Subroutine, cpu),
-            Instruction::RTR   => rts(ReturnOp::AndRestoreCCR, cpu),
+            Instruction::RTE   => rte(cpu),
+            Instruction::RTS   => rts(cpu),
+            Instruction::RTR   => rtr(cpu),
             // <ea>
             Instruction::LEA   { op } => lea(op, cpu),
             Instruction::PEA   { op } => pea(op, cpu),
@@ -509,6 +521,9 @@ impl Instruction {
             Instruction::EORI  { op } => todo!(),
             Instruction::CMPI  { op } => todo!(),
             Instruction::BTST  { op } => todo!(),
+            Instruction::BCHG  { op } => todo!(),
+            Instruction::BCLR  { op } => todo!(),
+            Instruction::BSET  { op } => todo!(),
 
             Instruction::NEGX  { op } => todo!(),
             Instruction::CLR   { op } => todo!(),
@@ -635,12 +650,11 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
                 if s == 0b11 {
                     if inst_type == 0b100 {
                         // bset
-                        BTST { op } 
+                        BSET { op } 
                     } else {
                         Undefined { op }
                     }
                 } else {
-
                     match inst_type {
                         0b000 => ORI  { op },
                         0b001 => ANDI { op },
@@ -648,7 +662,15 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
                         0b011 => ADDI { op },
                         0b101 => EORI { op },
                         0b110 => CMPI { op },
-                        0b100 => BTST { op },
+                        0b100 => {
+                            match s {
+                                0b00 => BTST { op },
+                                0b01 => BCHG { op },
+                                0b10 => BCLR { op },
+                                0b11 => BSET { op },
+                                _ => unreachable!(),
+                            }
+                        },
                         _ => Undefined { op },
                     }
                 }
@@ -663,7 +685,13 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
                     MOVEP { op }
                 } else {
                     // btst, bchg, bclr, bset
-                    BTST { op }
+                    match s {
+                        0b00 => BTST { op },
+                        0b01 => BCHG { op },
+                        0b10 => BCLR { op },
+                        0b11 => BSET { op },
+                        _ => unreachable!(),
+                    }
                 }
 
             }
@@ -820,9 +848,9 @@ fn decode_opcode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u
             // move [from|to] [sr|ccr]
 
             match nibble {
-                0b000 => MOVEToFrom { op },
-                0b100 => MOVEToFrom { op },
-                0b110 => MOVEToFrom { op },
+                0b000 => MOVEFromSR { op },
+                0b100 => MOVEToCCR  { op },
+                0b110 => MOVEToSR   { op },
                 _ => Undefined { op }
             }
         } else {
@@ -962,10 +990,12 @@ fn assert_valid_am(am: AddressingMode, mask: u32) {
 fn move_(op: u16, cpu: &mut CPU) {
     let s = get_op_size_move(op);
     let am_src = AddressingMode::decode_op(op);
+    // Every addressing mode can be used as the source, so no need to assert validity
 
     let xn_hi = get_op_xn_hi(op);
     let m_hi = get_op_m_hi(op);
     let am_dst = AddressingMode::decode(m_hi, xn_hi);
+    assert_valid_am(am_dst, 0b1111111_11000);
 
     let src_val = cpu.read_am(s, am_src);
     cpu.write_am(s, am_dst, src_val);
@@ -1106,47 +1136,41 @@ fn movep(op: u16, cpu: &mut CPU) {
     }
 }
 
-fn move_from_to(op: u16, cpu: &mut CPU) {
-    let variation = match (op & 0x0700) >> 8 {
-        0b000 => VariationCCRSR::Normal, // from sr
-        0b100 => VariationCCRSR::ToCCR,
-        0b110 => VariationCCRSR::ToSR,
-        _ => unreachable!()
-    };
-
+fn move_from_sr(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);
+    assert_valid_am(am, 0b101111111000);
 
-    match variation {
-        VariationCCRSR::Normal => {
-            // move from sr
-            assert_valid_am(am, 0b101111111000);
+    if cpu.revision == CPURevision::M68000 || cpu.reg.sr.supervisor_state() {
+        let val = cpu.reg.sr.sr();
+        // SR -> Destination
+        cpu.write_am(DataSize::Word, am, val as u32);
+    } else {
+        // trap
+        trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
+    }
+}
 
-            if cpu.revision == CPURevision::M68000 || cpu.reg.sr.supervisor_state() {
-                let val = cpu.reg.sr.sr();
-                cpu.write_am(DataSize::Word, am, val as u32);
-            } else {
-                // trap
-                trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
-            }
-        },
-        VariationCCRSR::ToCCR => {
-            assert_valid_am(am, 0b101111111111);
+fn move_to_ccr(op: u16, cpu: &mut CPU) {
+    let am = AddressingMode::decode_op(op);
+    assert_valid_am(am, 0b101111111111);
 
-            let val = cpu.read_am(DataSize::Word, am);
-            cpu.reg.sr.modify_ccr(val as u16);
-        },
-        VariationCCRSR::ToSR => {
-            assert_valid_am(am, 0b101111111111);
+    // Source -> CCR
+    let val = cpu.read_am(DataSize::Word, am);
+    cpu.reg.sr.modify_ccr(val as u16);
+}
 
-            let val = cpu.read_am(DataSize::Word, am);
-            if cpu.reg.sr.supervisor_state() {
-                cpu.reg.sr.modify_sr(val as u16);
-            } else {
-                // trap
-                trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
-            }
-        },
-    };
+fn move_to_sr(op: u16, cpu: &mut CPU) {
+    let am = AddressingMode::decode_op(op);
+    assert_valid_am(am, 0b101111111111);
+
+    let val = cpu.read_am(DataSize::Word, am);
+    if cpu.reg.sr.supervisor_state() {
+        // Source -> SR
+        cpu.reg.sr.modify_sr(val as u16);
+    } else {
+        // trap
+        trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
+    }
 }
 
 fn lea(op: u16, cpu: &mut CPU) {
@@ -1350,114 +1374,122 @@ fn get_displacement_no_inc(cpu: &mut CPU, disp_tmp: u16) -> i32 {
 }
 
 fn bra(op: u16, cpu: &mut CPU) {
-    let dbcc = (op & 0xf000) == 0x5000;
-    let condition = (op & 0x0f00) >> 8;
     let disp_tmp = op & 0x00ff;
+    let displacement = get_displacement_no_inc(cpu, disp_tmp); // .b, .w: +4(1/0) | .l: +8(2/0)
+    println!("DISPLACE: {displacement:08x}");
 
-    if condition == 0 && !dbcc {
-        // BRA
+    // PC + d_n -> PC
+    cpu.reg.pc = cpu.reg.pc.wrapping_add_signed(displacement);
+    cpu.cycle(2);
+}
+
+fn bsr(op: u16, cpu: &mut CPU) {
+    let disp_tmp = op & 0x00ff;
+    let displacement = get_displacement_no_inc(cpu, disp_tmp); // .b, .w: +4(1/0) | .l: +8(2/0)
+
+    // SP - 4 -> SP;
+    // PC -> (SP);
+    cpu.push_sp_long(cpu.reg.pc);   // +8(0/2)
+
+    // PC + d_n -> PC
+    cpu.reg.pc = cpu.reg.pc.wrapping_add_signed(displacement);
+    cpu.cycle(2);
+}
+
+fn bcc(op: u16, cpu: &mut CPU) {
+    let disp_tmp = op & 0x00ff;
+    let condition = (op & 0x0f00) >> 8;
+    let condition: Condition = condition.into();
+
+    if condition.is_true(cpu) {
         let displacement = get_displacement_no_inc(cpu, disp_tmp); // .b, .w: +4(1/0) | .l: +8(2/0)
-        println!("DISPLACE: {displacement:08x}");
 
         // PC + d_n -> PC
         cpu.reg.pc = cpu.reg.pc.wrapping_add_signed(displacement);
-        cpu.cycle(2);
-    } else if condition == 1 && !dbcc {
-        // BSR
-        let displacement = get_displacement_no_inc(cpu, disp_tmp); // .b, .w: +4(1/0) | .l: +8(2/0)
-
-        // SP - 4 -> SP;
-        // PC -> (SP);
-        cpu.push_sp_long(cpu.reg.pc);   // +8(0/2)
-
-        // PC + d_n -> PC
-        cpu.reg.pc = cpu.reg.pc.wrapping_add_signed(displacement);
-        cpu.cycle(2);
-    } else if !dbcc {
-        let condition: Condition = condition.into();
-        // Bcc
-        if condition.is_true(cpu) {
-            let displacement = get_displacement_no_inc(cpu, disp_tmp); // .b, .w: +4(1/0) | .l: +8(2/0)
-
-            // PC + d_n -> PC
-            cpu.reg.pc = cpu.reg.pc.wrapping_add_signed(displacement);
-            cpu.cycle(2);       // +2(0/0)
-        } else {
-            cpu.cycle(4);       // +4(0/0)
-
-            if disp_tmp == 0x00 {
-                // .w has 4 more cycles when branch not taken...
-                cpu.cycle(4);   // +4(0/0)
-            }
-        }
+        cpu.cycle(2);       // +2(0/0)
     } else {
-        // DBcc
-        let condition: Condition = condition.into();
-        let disp = cpu.read_pc_short();
+        cpu.cycle(4);       // +4(0/0)
 
-        // CURR CYCLES: 8(2/0)
-        if !condition.is_true(cpu) {
-            let dn: RegisterNum = get_op_xn_lo(op).into();
-            // Dn - 1 -> Dn;
-            let dn_val = cpu.reg.read_data(dn);
-            cpu.reg.write_data(dn, DataSize::Word, dn_val - 1);
-
-            if cpu.reg.read_data(dn) & 0xffff == 0xffff {
-                // branch taken => cycs: 10(2/0)
-                let displacement = sign_extend(DataSize::Long, disp as u32) as i32;
-
-                // PC + d_n -> PC
-                cpu.reg.pc = cpu.reg.pc.wrapping_add_signed(displacement);
-            } else {
-                // branch not taken => cycs: 14(3/0)
-                cpu.read_pc_inc_short();    // +4(1/0)
-            }
-            cpu.cycle(2);           // +2(0/0)
-        } else {
-            // cc is true => cycs: 12(2/0)
-            cpu.reg.pc += 2;
-            cpu.cycle(4);           // +4(0/0)
+        if disp_tmp == 0x00 {
+            // .w has 4 more cycles when branch not taken...
+            cpu.cycle(4);   // +4(0/0)
         }
     }
 }
 
-fn rts(ret_op: ReturnOp, cpu: &mut CPU) {
-    // All these instructions are "supposed to"(?) have an extra read cycle:
+fn dbcc(op: u16, cpu: &mut CPU) {
+    // DBcc
+    let condition = (op & 0x0f00) >> 8;
+    let condition: Condition = condition.into();
+    let disp = cpu.read_pc_short();
+
+    // CURR CYCLES: 8(2/0)
+    if !condition.is_true(cpu) {
+        let dn: RegisterNum = get_op_xn_lo(op).into();
+        // Dn - 1 -> Dn;
+        let dn_val = cpu.reg.read_data(dn);
+        cpu.reg.write_data(dn, DataSize::Word, dn_val - 1);
+
+        if cpu.reg.read_data(dn) & 0xffff == 0xffff {
+            // branch taken => cycs: 10(2/0)
+            let displacement = sign_extend(DataSize::Long, disp as u32) as i32;
+
+            // PC + d_n -> PC
+            cpu.reg.pc = cpu.reg.pc.wrapping_add_signed(displacement);
+        } else {
+            // branch not taken => cycs: 14(3/0)
+            cpu.read_pc_inc_short();    // +4(1/0)
+        }
+        cpu.cycle(2);           // +2(0/0)
+    } else {
+        // cc is true => cycs: 12(2/0)
+        cpu.reg.pc += 2;
+        cpu.cycle(4);           // +4(0/0)
+    }
+}
+
+fn rte(cpu: &mut CPU) {
+    // All the rt[e|s|r] instructions seemingly have an extra read cycle:
     // - RTS: 16(4/0)
     // - RTR: 20(5/0)
     // - RTE: 20(5/0)
     cpu.read_mem_short(0x0000_0000);    // +4(1/0) (dummy read)
 
-    match ret_op {
-        ReturnOp::Exception => {
-            if cpu.reg.sr.supervisor_state() {
-                // (SP) -> SR;
-                // SP + 2 -> PC;
-                let val = cpu.pop_sp_short();
-                cpu.reg.sr.modify_sr(val);  // +4(1/0)
-                // SP + 4 -> SP;
-                // Restore state and deallocate stack according to (SP)
-                let old_state = cpu.pop_sp_long();         // +8(2/0)
-                todo!("rte with {old_state:08x}");
-            } else {
-                trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
-            }
-        },
-        ReturnOp::Subroutine => {
-            // (SP) -> PC;
-            // SP + 4 -> SP
-            cpu.reg.pc = cpu.pop_sp_long();    // +8(2/0)
-        },
-        ReturnOp::AndRestoreCCR => {
-            // (SP) -> CCR;
-            // SP + 2 -> SP
-            let val = cpu.pop_sp_short();
-            cpu.reg.sr.modify_ccr(val); // +4(1/0)
-            // (SP) -> PC;
-            // SP + 4 -> SP
-            cpu.reg.pc = cpu.pop_sp_long();                // +8(2/0)
-        },
+    if cpu.reg.sr.supervisor_state() {
+        // (SP) -> SR;
+        // SP + 2 -> PC;
+        let val = cpu.pop_sp_short();
+        cpu.reg.sr.modify_sr(val);           // +4(1/0)
+
+        // SP + 4 -> SP;
+        // Restore state and deallocate stack according to (SP)
+        let old_state = cpu.pop_sp_long();  // +8(2/0)
+        todo!("rte with {old_state:08x}");
+    } else {
+        trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
     }
+}
+
+fn rts(cpu: &mut CPU) {
+    // Like rte and rtr, this incsruction has an extra read cycle
+    cpu.read_mem_short(0x0000_0000);    // +4(1/0) (dummy read)
+
+    // (SP) -> PC;
+    // SP + 4 -> SP
+    cpu.reg.pc = cpu.pop_sp_long();          // +8(2/0)
+}
+
+fn rtr(cpu: &mut CPU) {
+    // Like rts and rte, this incsruction has an extra read cycle
+    cpu.read_mem_short(0x0000_0000);    // +4(1/0) (dummy read)
+
+    // (SP) -> CCR;
+    // SP + 2 -> SP
+    let val = cpu.pop_sp_short();
+    cpu.reg.sr.modify_ccr(val);              // +4(1/0)
+    // (SP) -> PC;
+    // SP + 4 -> SP
+    cpu.reg.pc = cpu.pop_sp_long();          // +8(2/0)
 }
 
 fn link(op: u16, cpu: &mut CPU) {
