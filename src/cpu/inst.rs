@@ -348,7 +348,7 @@ impl Display for Instruction {
 
                 let xn = get_op_xn_hi(*op);
 
-                write!(f, "movea{} a{},{}", s, am_src, xn)
+                write!(f, "movea{} {},a{}", s, am_src, xn)
             },
             MOVE  { op } => {
                 let s = get_op_size_move(*op);
@@ -376,6 +376,16 @@ impl Display for Instruction {
             MOVEFromSR{ op } => write!(f, "MOVE sr,{}", AddressingMode::decode_op(*op)),
             MOVEToCCR { op } => write!(f, "MOVE {},ccr", AddressingMode::decode_op(*op)),
             MOVEToSR  { op } => write!(f, "MOVE {},sr", AddressingMode::decode_op(*op)),
+            MOVEUSP {op} => {
+                let an = get_op_xn_lo(*op);
+                if op & 0b1000 == 0 {
+                    // 0: an -> usp
+                    write!(f, "move.l a{},usp", an)
+                } else {
+                    // 1: usp -> an
+                    write!(f, "move.l usp,a{}", an)
+                }
+            },
 
             NEGX  { op } => todo!(),
             CLR   { op } => todo!(),
@@ -399,7 +409,6 @@ impl Display for Instruction {
                 write!(f, "link{} a{},#imm", size, an)
             },
             UNLK  { op } => write!(f, "unlk a{}", get_op_xn_lo(*op)),
-            MOVEUSP {op} => todo!(),
             RESET              => write!(f, "reset"),
             NOP                => write!(f, "nop"),
             STOP               => write!(f, "stop #imm"),
@@ -488,7 +497,7 @@ impl Instruction {
             Instruction::MOVEToSR   { op } => move_to_sr(op, cpu),
             Instruction::MOVEQ { op } => moveq(op, cpu),
             Instruction::MOVEM { op } => movem(op, cpu),
-            Instruction::MOVEUSP { op } => todo!(),
+            Instruction::MOVEUSP { op } => move_usp(op, cpu),
             // exceptions, etc.
             Instruction::TRAP  { op } => trap(op, cpu),
             Instruction::TRAPV => trapv(cpu),
@@ -739,7 +748,7 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
             }
         },
         0b0111 => {
-            if m_hi & 0b100 != 0 {
+            if m_hi & 0b100 == 0 {
                 MOVEQ { op }
             } else {
                 // ?
@@ -1008,7 +1017,7 @@ fn move_(op: u16, cpu: &mut CPU) {
 
 fn moveq(op: u16, cpu: &mut CPU) {
     let dn = get_op_xn_hi(op).into();
-    let val = sign_extend_byte(0xff);
+    let val = sign_extend_byte(op as u8);
     cpu.reg.write_data(dn, DataSize::Long, val);
 
     cpu.reg.sr.modify_n(is_negative(val, DataSize::Long));
@@ -1140,10 +1149,15 @@ fn move_from_sr(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);
     assert_valid_am(am, 0b101111111000);
 
-    if cpu.revision == CPURevision::M68000 || cpu.reg.sr.supervisor_state() {
+    if cpu.reg.sr.supervisor_state() || cpu.revision == CPURevision::M68000 {
         let val = cpu.reg.sr.sr();
         // SR -> Destination
-        cpu.write_am(DataSize::Word, am, val as u32);
+        cpu.write_am(DataSize::Word, am, val as u32);   // +x(r/w)
+
+        if let AddressingMode::DataReg(_) = am {
+            // move.w dn,sr is 6 cycles
+            cpu.cycle(2);
+        }
     } else {
         // trap
         trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
@@ -1155,18 +1169,37 @@ fn move_to_ccr(op: u16, cpu: &mut CPU) {
     assert_valid_am(am, 0b101111111111);
 
     // Source -> CCR
-    let val = cpu.read_am(DataSize::Word, am);
+    let val = cpu.read_am(DataSize::Word, am);  // +x(r/0)
     cpu.reg.sr.modify_ccr(val as u16);
+    cpu.cycle(8);       // +8(0/0)
 }
 
 fn move_to_sr(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);
     assert_valid_am(am, 0b101111111111);
 
-    let val = cpu.read_am(DataSize::Word, am);
     if cpu.reg.sr.supervisor_state() {
+        let val = cpu.read_am(DataSize::Word, am);  // +x(r/0)
         // Source -> SR
         cpu.reg.sr.modify_sr(val as u16);
+        cpu.cycle(8);   // +8(0/0)
+    } else {
+        // trap
+        trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
+    }
+}
+
+fn move_usp(op: u16, cpu: &mut CPU) {
+    if cpu.reg.sr.supervisor_state() {
+        let an: RegisterNum = get_op_xn_lo(op).into();
+
+        if op & 0b1000 == 0 {
+            // an -> usp
+            cpu.reg.usp = cpu.reg.read_address(an);
+        } else {
+            // usp -> an
+            cpu.reg.write_address(an, DataSize::Long, cpu.reg.usp);
+        }
     } else {
         // trap
         trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
@@ -1211,9 +1244,12 @@ fn not(op: u16, cpu: &mut CPU) {
     cpu.reg.sr.clear_c();
 }
 
-/// Cycles: 30(3/3)
+/// Cycles: 30(3/3) (MC68000)
 fn trap_vec(vector_num: u8, cpu: &mut CPU) {
     cpu.reg.sr.set_supervisor();
+
+    // ?
+    cpu.read_pc_short();    // +4(1/0)
 
     if cpu.revision != CPURevision::M68000 {
         // As is written elsewhere:
@@ -1221,23 +1257,24 @@ fn trap_vec(vector_num: u8, cpu: &mut CPU) {
         // format code to the system stack"
         // Format + Offset word -> (SSP) 
         // SSP - 2 -> SSP
-        cpu.cycle(2);   // ?
         let format_offset = todo!("Format/offset -> (SSP)");
         cpu.push_sp_short(format_offset);  // +4(0/1) => 4(0/1)
+        cpu.cycle(2);   // ?
     }
 
     // PC -> (SSP)
     // SSP - 4 -> SSP
-    cpu.cycle(2);   // ?
     cpu.push_sp_long(cpu.reg.pc);        // +8(0/2) => ??(1/2)
+    cpu.cycle(2);   // ?
 
     // SR -> (SSP)
     // SSP - 2 -> SSP
-    cpu.cycle(2);   // ?
     cpu.push_sp_short(cpu.reg.sr.sr());  // +4(0/1) => ??(1/3)
+    cpu.cycle(2);   // ?
 
     // (Vector) -> PC
-    cpu.reg.pc = cpu.read_mem_long(vector_num as u32 * CPU_VECTOR_SIZE);// +8(2/0) => 30(3/3)  (r/w => 24)
+    cpu.reg.pc = cpu.read_mem_long(vector_num as u32 * CPU_VECTOR_SIZE);// +8(2/0) => 24(3/3)  (or 28(3/4))
+    cpu.cycle(2);
 }
 
 fn trapv(cpu: &mut CPU) {
@@ -1247,56 +1284,17 @@ fn trapv(cpu: &mut CPU) {
 }
 
 fn trap(op: u16, cpu: &mut CPU) {
-    // 1 -> S-bit of SR
-    cpu.reg.sr.set_supervisor();
+    // ? There seems to be conflicting information as to whether this instruction should
+    // ? take 34 or 38 cycles. For now, let's assume it does.
+    cpu.cycle(4);   // + 4(0/0)
 
-    let v = (op & 0xf) as u32;
-
-    if cpu.revision != CPURevision::M68000 {
-        // "The MC68000 and MC68008 do not write vector offset or
-        // format code to the system stack"
-        // SSP - 2 -> SSP
-        // Format/Offset -> (SSP)
-        let format_offset = todo!("Format/offset -> (SSP)");
-        cpu.push_sp_short(format_offset);
-    }
-
-    // SSP-4 -> SSP
-    // PC -> (SSP)
-    cpu.push_sp_long(cpu.reg.pc);       // +8(0/2)
-    // SSP - 2 -> SSP
-    // SR -> (SSP)
-    cpu.push_sp_short(cpu.reg.sr.sr()); // +4(0/1)
-
-    // Vector Address -> PC
-    let vector_addr = v * CPU_VECTOR_SIZE + 32 * CPU_VECTOR_SIZE;
-    cpu.reg.pc = cpu.read_mem_long(vector_addr);    // +8(2/0)
-
+    let v = (op & 0xf) as u8;
+    trap_vec(v + 32, cpu);
 }
 
 fn trap_illegal(op: u16, cpu: &mut CPU) {
-    println!("illegal instruction ({op:016b})");
-
-    cpu.reg.sr.set_supervisor();
-
-    if cpu.revision != CPURevision::M68000 {
-        // "The MC68000 and MC68008 cannot write vector offset and 
-        // format code to the system stack"
-        // SSP - 2 -> SSP
-        // Vector offset -> (SSP)
-        let vector_offset = todo!("Vector offset -> (SSP)");
-        cpu.push_sp_short(vector_offset);
-    }
-
-    // SSP - 4 -> SSP;
-    // PC -> (SSP);
-    cpu.push_sp_long(cpu.reg.pc);              // +8(0/2)
-    // SSP - 2 -> SSP;
-    // SR -> (SSP);
-    cpu.push_sp_short(cpu.reg.sr.sr());        // +4(0/1)
-    // Illegal Instruction Vector Address -> PC
-    let vector_addr = CPUVector::IllegalInstruction as u32 * CPU_VECTOR_SIZE;
-    cpu.reg.pc = cpu.read_mem_long(vector_addr);    // +8(2/0)
+    println!("illegal instruction (0b{op:016b}; 0x{op:04x})");
+    trap_vec(CPUVector::IllegalInstruction as u8, cpu);
 }
 
 fn stop(cpu: &mut CPU) {
@@ -1497,15 +1495,15 @@ fn link(op: u16, cpu: &mut CPU) {
 
     let displacement = if op & 0b0000011001010000 != 0 {
         // word
-        sign_extend(DataSize::Long, cpu.read_pc_inc_short() as u32)
+        sign_extend(DataSize::Long, cpu.read_pc_inc_short() as u32) // +4(1/0)
     } else {
         // long (only on mc680x0 where x >= 2)
-        cpu.read_pc_inc_long()
+        cpu.read_pc_inc_long()  //
     };
 
     // SP - 4 -> SP;
     // An -> (SP);
-    cpu.push_sp_long(cpu.reg.read_address(an));
+    cpu.push_sp_long(cpu.reg.read_address(an)); // + 8(0/2)
 
     // SP -> An;
     let sp = cpu.reg.read_address(RegisterNum::R7);
@@ -1524,6 +1522,6 @@ fn unlk(op: u16, cpu: &mut CPU) {
 
     // (SP) -> An;
     // SP + 4 -> SP
-    let val = cpu.pop_sp_long();
+    let val = cpu.pop_sp_long();    // +8(2/0)
     cpu.reg.write_address(an, DataSize::Long, val);
 }
