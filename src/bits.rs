@@ -89,14 +89,23 @@ pub fn is_negative(val: u32, size: DataSize) -> bool {
     val & mask != 0
 }
 
-/// Sign-extend a byte to a long
-#[inline(always)]
-pub fn sign_extend_byte(val: u8) -> u32 {
-    val as i8 as i32 as u32
+pub trait SignExtend {
+    /// Sign-extend a number of a particular size into a `u32`.
+    fn sign_extend(self) -> u32;
 }
 
-/// Sign extend a word to a long
-#[inline(always)]
-pub fn sign_extend_word(val: u16) -> u32 {
-    val as i16 as i32 as u32
+impl SignExtend for u8 {
+    /// Sign-extend a `u8` into a `u32`.
+    #[inline(always)]
+    fn sign_extend(self) -> u32 {
+        self as i8 as i32 as u32
+    }
+}
+
+impl SignExtend for u16 {
+    /// Sign-extend a `u16` into a `u32`.
+    #[inline(always)]
+    fn sign_extend(self) -> u32 {
+        self as i16 as i32 as u32
+    }
 }

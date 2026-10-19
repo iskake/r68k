@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::{bits::{DataSize, is_negative, is_zero, sign_extend_word, sign_extend_byte}, cpu::{CPU, CPURevision, CPUVector, RegisterNum, CPU_VECTOR_SIZE}};
+use crate::{bits::{DataSize, SignExtend, is_negative, is_zero}, cpu::{CPU, CPU_VECTOR_SIZE, CPURevision, CPUVector, RegisterNum}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Condition {
@@ -1023,7 +1023,7 @@ fn movea(op: u16, cpu: &mut CPU) {
 
     let val = cpu.read_am(s, am_src);
     let src_val = if let DataSize::Word = s {
-        sign_extend_word(val as u16)
+        (val as u16).sign_extend()
     } else {
         val
     };
@@ -1033,7 +1033,7 @@ fn movea(op: u16, cpu: &mut CPU) {
 
 fn moveq(op: u16, cpu: &mut CPU) {
     let dn = get_op_xn_hi(op).into();
-    let val = sign_extend_byte(op as u8);
+    let val = (op as u8).sign_extend();
     cpu.reg.write_data(dn, DataSize::Long, val);
 
     cpu.reg.sr.modify_n(is_negative(val, DataSize::Long));
@@ -1084,7 +1084,7 @@ fn movem(op: u16, cpu: &mut CPU) {
                     }
                 };
                 let val = if let DataSize::Word = size {
-                    sign_extend_word(w as u16)
+                    (w as u16).sign_extend()
                 } else {
                     w
                 };
@@ -1372,7 +1372,7 @@ fn jmp(op: u16, cpu: &mut CPU) {
 /// Cycles: .b, .w: +4(1/0) | .l: +8(2/0)
 fn get_displacement_no_inc(cpu: &mut CPU, disp_tmp: u16) -> i32 {
     if disp_tmp == 0x00 { 
-        sign_extend_word(cpu.read_pc_short()) as i32  // +4(1/0)
+        cpu.read_pc_short().sign_extend() as i32  // +4(1/0)
     } else if disp_tmp == 0xff
         && (cpu.revision == CPURevision::M68020
         ||  cpu.revision == CPURevision::M68030
@@ -1383,7 +1383,7 @@ fn get_displacement_no_inc(cpu: &mut CPU, disp_tmp: u16) -> i32 {
         // Seems to have the same amount of cycles as 16 bit displacement,
         // so we just read at the pc anyway.
         cpu.read_pc_short();            // +4(1/0)
-        sign_extend_byte(disp_tmp as u8) as i32
+        (disp_tmp as u8).sign_extend() as i32
     }
 }
 
@@ -1446,7 +1446,7 @@ fn dbcc(op: u16, cpu: &mut CPU) {
 
         if cpu.reg.read_data(dn) & 0xffff == 0xffff {
             // branch taken => cycs: 10(2/0)
-            let displacement = sign_extend_word(disp) as i32;
+            let displacement = disp.sign_extend() as i32;
 
             // PC + d_n -> PC
             cpu.reg.pc = cpu.reg.pc.wrapping_add_signed(displacement);
@@ -1511,7 +1511,7 @@ fn link(op: u16, cpu: &mut CPU) {
 
     let displacement = if op & 0b0000011001010000 != 0 {
         // word
-        sign_extend_word(cpu.read_pc_inc_short()) // +4(1/0)
+        cpu.read_pc_inc_short().sign_extend() // +4(1/0)
     } else {
         // long (only on mc680x0 where x >= 2)
         cpu.read_pc_inc_long()  //
