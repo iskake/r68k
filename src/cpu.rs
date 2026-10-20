@@ -410,7 +410,6 @@ pub enum CPURevision {
     M68020,
     M68030,
     M68040,
-    M68060,
 }
 
 pub struct CPU {
@@ -442,7 +441,6 @@ impl CPU {
             CPURevision::M68020 => todo!("68020 support"),
             CPURevision::M68030 => todo!("68030 support"),
             CPURevision::M68040 => todo!("68040 support"),
-            CPURevision::M68060 => todo!("68060 support"),
         };
 
         CPU {
@@ -472,7 +470,6 @@ impl CPU {
             CPURevision::M68020 => String::from("MC68020"),
             CPURevision::M68030 => String::from("MC68030"),
             CPURevision::M68040 => String::from("MC68040"),
-            CPURevision::M68060 => String::from("MC68060"),
         }
     }
 
