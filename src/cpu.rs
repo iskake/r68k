@@ -138,12 +138,12 @@ impl StatusRegister {
         (self.val & 0xff) as u8
     }
 
-    fn modify_sr(&mut self, val: u16) {
-        self.val = val
+    fn modify_sr(&mut self, val: u16, cpu_rev: CPURevision) {
+        self.val = val & cpu_rev.sr_flags_mask()
     }
 
     fn modify_ccr(&mut self, val: u16) {
-        self.val = (self.val & 0xff00) | (val & 0xff)
+        self.val = (self.val & 0xff00) | (val & 0x1f)
     }
 
     fn x(&self) -> bool {
@@ -274,6 +274,7 @@ impl Registers {
             a6: 0,
 
             usp: 0,
+            // TODO: ISP, MSP
             ssp: 0,
 
             pc: 0,
@@ -365,7 +366,6 @@ impl Registers {
 
     /// Increment address register an (a0-a7) by sizeof(byte/word/long)
     fn inc_address(&mut self, an: RegisterNum, size: DataSize) {
-        assert_ne!(size, DataSize::Byte);
         match an {
             RegisterNum::R0 => self.a0  += size.sizeof() as u32,
             RegisterNum::R1 => self.a1  += size.sizeof() as u32,
@@ -384,7 +384,6 @@ impl Registers {
 
     /// Decrement address register an (a0-a7) by sizeof(byte/word/long)
     fn dec_address(&mut self, an: RegisterNum, size: DataSize) {
-        assert_ne!(size, DataSize::Byte);
         match an {
             RegisterNum::R0 => self.a0  -= size.sizeof() as u32,
             RegisterNum::R1 => self.a1  -= size.sizeof() as u32,
@@ -405,11 +404,21 @@ impl Registers {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CPURevision {
     // Temp.
-    M68000,
-    M68010,
-    M68020,
-    M68030,
-    M68040,
+    MC68000,
+    MC68010,
+    MC68020,
+    MC68030,
+    MC68040,
+}
+
+impl CPURevision {
+    fn sr_flags_mask(self) -> u16 {
+        match self {
+            CPURevision::MC68000 => 0b10100111_00011111,
+            CPURevision::MC68010 => 0b10100111_00011111,
+            _ => 0b11110111_00011111,
+        }
+    }
 }
 
 pub struct CPU {
@@ -433,14 +442,49 @@ pub struct CPU {
     addr_bus_mask: u32,
 }
 
+macro_rules! define_modify_am_op {
+    ($fn_name: ident, $op: tt) => {
+        pub fn $fn_name(&mut self, size: DataSize, am: AddressingMode, val: u32) -> (u32, u32) {
+            let addr = self.calculate_am_operand(size, am);
+
+            match am {
+                // 0(0/0)
+                AddressingMode::DataReg(dn) => {
+                    let previous = self.reg.read_data(dn);
+                    let result = previous $op val;
+                    self.reg.write_data(dn, size, result);
+                    (previous, result)
+                },
+                // 0(0/0)
+                AddressingMode::AddrReg(an) => {
+                    let previous = self.reg.read_address(an);
+                    let result = previous $op val;
+                    self.reg.write_address(an, size, result);
+                    (previous, result)
+                },
+                // x(n/a)
+                AddressingMode::Imm => panic!("Cannot write to immediate"),
+                AddressingMode::Invalid => panic!("Cannot write with invalid addressing mode"),
+                // 4(0/1) | 8(0/2)
+                _ => {
+                    let previous = self.read_mem_size_internal(size, addr);
+                    let result = previous $op val;
+                    self.write_mem_size(size, addr, result);
+                    (previous, result)
+                }
+            }
+        }
+    };
+}
+
 impl CPU {
     pub fn new(rev: CPURevision) -> CPU {
         let (data_bus_mask, addr_bus_mask) = match rev {
-            CPURevision::M68000 => { (0x0000_ffff, 0x00ff_ffff) },
-            CPURevision::M68010 => todo!("68010 support"),
-            CPURevision::M68020 => todo!("68020 support"),
-            CPURevision::M68030 => todo!("68030 support"),
-            CPURevision::M68040 => todo!("68040 support"),
+            CPURevision::MC68000 => { (0x0000_ffff, 0x00ff_ffff) },
+            CPURevision::MC68010 => { todo!("MC68010 support"); (0x0000_ffff, 0x00ff_ffff) },
+            CPURevision::MC68020 => { todo!("MC68020 support"); (0xffff_ffff, 0xffff_ffff) },
+            CPURevision::MC68030 => { todo!("MC68030 support"); (0xffff_ffff, 0xffff_ffff) },
+            CPURevision::MC68040 => { todo!("MC68040 support"); (0xffff_ffff, 0xffff_ffff) },
         };
 
         CPU {
@@ -463,16 +507,6 @@ impl CPU {
         }
     }
 
-    pub fn cpu_name(&self) -> String {
-        match self.revision {
-            CPURevision::M68000 => String::from("MC68000"),
-            CPURevision::M68010 => String::from("MC68010"),
-            CPURevision::M68020 => String::from("MC68020"),
-            CPURevision::M68030 => String::from("MC68030"),
-            CPURevision::M68040 => String::from("MC68040"),
-        }
-    }
-
     pub fn init(&mut self) {
         self.reg.sr.set_supervisor();
         self.reg.ssp = self.read_mem_long(CPUVector::ResetSP as u32 * CPU_VECTOR_SIZE);
@@ -480,7 +514,7 @@ impl CPU {
     }
 
     pub fn print_state(&self) {
-        println!("CPU STATE ({})", self.cpu_name());
+        println!("CPU STATE ({:?})", self.revision);
         println!(
             "  d0: {:08x}, d1: {:08x}, d2: {:08x}, d3: {:08x}, d4: {:08x}, d5: {:08x}, d6: {:08x}, d7: {:08x}",
             self.reg.d0,
@@ -511,6 +545,7 @@ impl CPU {
             if self.reg.sr.supervisor_state() { "usp" } else { "ssp" },
             if self.reg.sr.supervisor_state() { self.reg.usp } else { self.reg.ssp },
         );
+        println!("      ttsm iii    xnzvc");
         println!(
             "  pc: {:08x}, cycles: {}({}/{}), data bus: {:08x}, addr bus: {:08x}",
             self.reg.pc,
@@ -671,6 +706,15 @@ impl CPU {
             self.cycle_read();
 
             val
+        }
+    }
+
+    /// Cycles: 0(0/0)
+    fn read_mem_size_internal(&mut self, size: DataSize, addr: u32) -> u32 {
+        match size {
+            DataSize::Byte => self.read_mem_byte_internal(addr) as u32,
+            DataSize::Word => self.read_mem_short_internal(addr) as u32,
+            DataSize::Long => self.read_mem_long_internal(addr),
         }
     }
 
@@ -844,9 +888,9 @@ impl CPU {
     /// |d(An)   |8(2/0) | 12(3/0)|
     /// |d(An,ix)|10(2/0)| 14(3/0)|
     /// |xxx.w   |8(2/0) | 12(3/0)|
-    /// |xxx.l   |10(2/0)| 14(3/0)|
+    /// |xxx.l   |10(2/0)| 16(3/0)|
     /// |d(PC)   |8(2/0) | 12(3/0)|
-    /// |d(PC,ix)|12(3/0)| 16(4/0)|
+    /// |d(PC,ix)|12(3/0)| 14(4/0)|
     /// |#xxx    |4(1/0) | 8(2/0) |
     pub fn read_am(&mut self, size: DataSize, am: AddressingMode) -> u32 {
         let addr = self.calculate_am_operand(size, am);
@@ -888,9 +932,9 @@ impl CPU {
     /// |d(An)   |8(2/0) | 12(3/0)|
     /// |d(An,ix)|10(2/0)| 14(3/0)|
     /// |xxx.w   |8(2/0) | 12(3/0)|
-    /// |xxx.l   |10(2/0)| 14(3/0)|
+    /// |xxx.l   |10(2/0)| 16(3/0)|
     /// |d(PC)   |8(2/0) | 12(3/0)|
-    /// |d(PC,ix)|12(3/0)| 16(4/0)|
+    /// |d(PC,ix)|12(3/0)| 14(4/0)|
     /// |#xxx    |4(1/0) | 8(2/0) |
     pub fn write_am(&mut self, size: DataSize, am: AddressingMode, val: u32) {
         let addr = self.calculate_am_operand(size, am);
@@ -908,6 +952,8 @@ impl CPU {
         }
     }
 
+    define_modify_am_op!(modify_am_add, +);
+    define_modify_am_op!(modify_am_sub, -);
 
     /// Push an element on top of the stack.
     /// Decreases the user stack pointer (a7) by 2.
@@ -996,6 +1042,14 @@ impl CPU {
             let val = self.read_pc_long();
             self.reg.pc += 2;
             val
+        }
+    }
+
+    /// Cycles: .b, .w: 4(1/0) | .l: 8(2/0)
+    pub fn read_pc_inc_size(&mut self, size: DataSize) -> u32 {
+        match size {
+            DataSize::Long => self.read_pc_inc_long(),
+            _ => (self.read_pc_inc_short() as u32) & size.mask(),
         }
     }
 

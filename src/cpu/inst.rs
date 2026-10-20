@@ -319,8 +319,6 @@ impl Display for Instruction {
         match self {
             ORI   { op } => write!(f, "ori{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
             ANDI  { op } => todo!(),
-            SUBI  { op } => todo!(),
-            ADDI  { op } => todo!(),
             EORI  { op } => todo!(),
             CMPI  { op } => todo!(),
             BTST  { op } => todo!(),
@@ -420,8 +418,63 @@ impl Display for Instruction {
             JMP   { op } => write!(f, "jmp {}", AddressingMode::decode_op(*op)),
             LEA   { op } => write!(f, "lea {}", AddressingMode::decode_op(*op)),
             CHK   { op } => todo!(),
-            ADDQ  { op } => todo!(),
-            SUBQ  { op } => todo!(),
+
+            ADDI  { op } => {
+                let am = AddressingMode::decode_op(*op);
+                let s = get_op_size(*op);
+
+                write!(f, "addi{} #imm,{}", s, am)
+            },
+            ADDQ  { op } => {
+                let s = get_op_size(*op);
+                let am = AddressingMode::decode_op(*op);
+                let val = ((*op) & 0xe00) >> 9;
+                write!(f, "addq{} #{:01x},{}", s, val, am)
+            },
+            ADD   { op } => {
+                let am = AddressingMode::decode_op(*op);
+                let m = get_op_m_hi(*op);
+                let s: DataSize = (m & 0b11).into();
+                let dn = get_op_xn_hi(*op);
+                if m & 0b100 == 0 {
+                    // <ea> + Dn -> Dn
+                    write!(f, "add{} {},d{}", s, am, dn)
+                } else {
+                    // Dn + <ea> -> <ea>
+                    write!(f, "add{} d{},{}", s, dn, am)
+                }
+            },
+            ADDX  { op } => {
+                let xn_src = get_op_xn_lo(*op);
+                let xn_dst = get_op_xn_hi(*op);
+                let s = get_op_size(*op);
+                let m = op & 0b1000 == 0;
+
+                if m {
+                    // ADDX Dy,Dx
+                    write!(f, "addx{} d{},d{}", s, xn_src, xn_dst)
+                } else {
+                    // ADDX -(Ay),-(Ax)
+                    write!(f, "addx{} -(a{}),-(a{})", s, xn_src, xn_dst)
+                }
+            },
+            ADDA  { op } => {
+            let am = AddressingMode::decode_op(*op);
+            let s = get_op_size_bit8(*op);
+            let an = get_op_xn_hi(*op);
+                write!(f, "adda{} {},a{}", s, am, an)
+            },
+            SUBQ  { op } => {
+                let s = get_op_size(*op);
+                let am = AddressingMode::decode_op(*op);
+                let val = ((*op) & 0xe00) >> 9;
+                write!(f, "subq{} #{:01x},{}", s, val, am)
+            },
+            SUBI  { op } => write!(f, "subi TMP"),
+            SUB   { op } => write!(f, "sub TMP"),
+            SUBX  { op } => write!(f, "subx TMP"),
+            SUBA  { op } => write!(f, "suba TMP"),
+
             Scc   { op } => todo!(),
             DBcc  { op } => {
                 let cc: Condition = ((op & 0x0f00) >> 8).into();
@@ -461,9 +514,6 @@ impl Display for Instruction {
             DIVS  { op } => todo!(),
             SBCD  { op } => todo!(),
             OR    { op } => todo!(),
-            SUB   { op } => todo!(),
-            SUBX  { op } => todo!(),
-            SUBA  { op } => todo!(),
             EOR   { op } => todo!(),
             CMPM  { op } => todo!(),
             CMP   { op } => todo!(),
@@ -473,9 +523,6 @@ impl Display for Instruction {
             ABCD  { op } => todo!(),
             EXG   { op } => todo!(),
             AND   { op } => todo!(),
-            ADD   { op } => todo!(),
-            ADDX  { op } => todo!(),
-            ADDA  { op } => todo!(),
             ASd   { op } => todo!(),
             LSd   { op } => todo!(),
             ROXd  { op } => todo!(),
@@ -498,6 +545,17 @@ impl Instruction {
             Instruction::MOVEQ { op } => moveq(op, cpu),
             Instruction::MOVEM { op } => movem(op, cpu),
             Instruction::MOVEUSP { op } => move_usp(op, cpu),
+            // arithmetic
+            Instruction::ADDI  { op } => addi(op, cpu),
+            Instruction::ADD   { op } => add(op, cpu),
+            Instruction::ADDX  { op } => addx(op, cpu),
+            Instruction::ADDA  { op } => adda(op, cpu),
+            Instruction::ADDQ  { op } => addq(op, cpu),
+            Instruction::SUBI  { op } => todo!(),
+            Instruction::SUB   { op } => todo!(),
+            Instruction::SUBX  { op } => todo!(),
+            Instruction::SUBA  { op } => todo!(),
+            Instruction::SUBQ  { op } => subq(op, cpu),
             // exceptions, etc.
             Instruction::TRAP  { op } => trap(op, cpu),
             Instruction::TRAPV => trapv(cpu),
@@ -525,8 +583,6 @@ impl Instruction {
             // [Unsorted]
             Instruction::ORI   { op } => todo!(),
             Instruction::ANDI  { op } => todo!(),
-            Instruction::SUBI  { op } => todo!(),
-            Instruction::ADDI  { op } => todo!(),
             Instruction::EORI  { op } => todo!(),
             Instruction::CMPI  { op } => todo!(),
             Instruction::BTST  { op } => todo!(),
@@ -548,16 +604,11 @@ impl Instruction {
             Instruction::UNLK  { op } => unlk(op, cpu),
 
             Instruction::CHK   { op } => todo!(),
-            Instruction::ADDQ  { op } => todo!(),
-            Instruction::SUBQ  { op } => todo!(),
             Instruction::Scc   { op } => todo!(),
             Instruction::DIVU  { op } => todo!(),
             Instruction::DIVS  { op } => todo!(),
             Instruction::SBCD  { op } => todo!(),
             Instruction::OR    { op } => todo!(),
-            Instruction::SUB   { op } => todo!(),
-            Instruction::SUBX  { op } => todo!(),
-            Instruction::SUBA  { op } => todo!(),
             Instruction::EOR   { op } => todo!(),
             Instruction::CMPM  { op } => todo!(),
             Instruction::CMP   { op } => todo!(),
@@ -567,9 +618,6 @@ impl Instruction {
             Instruction::ABCD  { op } => todo!(),
             Instruction::EXG   { op } => todo!(),
             Instruction::AND   { op } => todo!(),
-            Instruction::ADD   { op } => todo!(),
-            Instruction::ADDX  { op } => todo!(),
-            Instruction::ADDA  { op } => todo!(),
             Instruction::ASd   { op } => todo!(),
             Instruction::LSd   { op } => todo!(),
             Instruction::ROXd  { op } => todo!(),
@@ -802,10 +850,10 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
             }
         },
         0b1101 => {
-            if d && m & 0b110 == 0b000 {
-                ADDX { op }
-            } else if s == 0b11 {
+            if s == 0b11 {
                 ADDA { op }
+            } else if d && m & 0b110 == 0b000 {
+                ADDX { op }
             } else {
                 ADD { op }
             }
@@ -1034,6 +1082,7 @@ fn movea(op: u16, cpu: &mut CPU) {
 fn moveq(op: u16, cpu: &mut CPU) {
     let dn = get_op_xn_hi(op).into();
     let val = (op as u8).sign_extend();
+
     cpu.reg.write_data(dn, DataSize::Long, val);
 
     cpu.reg.sr.modify_n(is_negative(val, DataSize::Long));
@@ -1165,7 +1214,7 @@ fn move_from_sr(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);
     assert_valid_am(am, 0b101111111000);
 
-    if cpu.reg.sr.supervisor_state() || cpu.revision == CPURevision::M68000 {
+    if cpu.reg.sr.supervisor_state() || cpu.revision == CPURevision::MC68000 {
         let val = cpu.reg.sr.sr();
         // SR -> Destination
         cpu.write_am(DataSize::Word, am, val as u32);   // +x(r/w)
@@ -1197,7 +1246,7 @@ fn move_to_sr(op: u16, cpu: &mut CPU) {
     if cpu.reg.sr.supervisor_state() {
         let val = cpu.read_am(DataSize::Word, am);  // +x(r/0)
         // Source -> SR
-        cpu.reg.sr.modify_sr(val as u16);
+        cpu.reg.sr.modify_sr(val as u16, cpu.revision);
         cpu.cycle(8);   // +8(0/0)
     } else {
         // trap
@@ -1219,6 +1268,182 @@ fn move_usp(op: u16, cpu: &mut CPU) {
     } else {
         // trap
         trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
+    }
+}
+
+fn set_sr_flags_add(cpu: &mut CPU, s: DataSize, old: u32, val: u32, res: u32) {
+    let a = old & s.mask();
+    let b = val & s.mask();
+    let r = res & s.mask();
+
+    let n = r & s.sign_bit() != 0;
+    let z = r == 0;
+    let v = (!(a ^ b) & (a ^ r) & s.sign_bit()) != 0;
+    let c = r < a;
+
+    cpu.reg.sr.modify_x(c);
+    cpu.reg.sr.modify_n(n);
+    cpu.reg.sr.modify_z(z);
+    cpu.reg.sr.modify_v(v);
+    cpu.reg.sr.modify_c(c);
+}
+
+fn set_sr_flags_sub(cpu: &mut CPU, s: DataSize, old: u32, val: u32, res: u32) {
+    let a = old & s.mask();
+    let b = val & s.mask();
+    let r = res & s.mask();
+
+    let n = r & s.sign_bit() != 0;
+    let z = r == 0;
+    let v = ((a ^ b) & (a ^ r) & s.sign_bit()) != 0;
+    let c = a < b;
+
+    cpu.reg.sr.modify_x(c);
+    cpu.reg.sr.modify_n(n);
+    cpu.reg.sr.modify_z(z);
+    cpu.reg.sr.modify_v(v);
+    cpu.reg.sr.modify_c(c);
+}
+
+fn add(op: u16, cpu: &mut CPU) {
+    let am = AddressingMode::decode_op(op);
+
+    let m = get_op_m_hi(op);
+    let s = (m & 0b11).into();
+    let dn = get_op_xn_hi(op).into();
+
+    if m & 0b100 == 0 {
+        if s == DataSize::Long {
+            match am {
+                AddressingMode::DataReg(_) | AddressingMode::AddrReg(_) => cpu.cycle(4),
+                _ => cpu.cycle(2),
+            }
+        }
+
+        let val = cpu.read_am(s, am);
+
+        // <ea> + Dn -> Dn
+        let (old, res) = cpu.modify_am_add(s, AddressingMode::DataReg(dn), val);
+
+        set_sr_flags_add(cpu, s, old, val, res);
+    } else {
+        // TODO?: Is it possible for a Dy + Dx -> Dx (where second <ea> = Dx) to be
+        // decoded into this path (i.e. m & 0b100 != 0) instead of the above one?
+        if s != DataSize::Long {
+            cpu.cycle(4);   // +4(0/0) (?: should be write cycle?)
+        } else {
+            cpu.cycle(8);   // +8(0/0) (?: should be write cycles?)
+        }
+
+        let val = cpu.reg.read_data(dn);
+
+        // Dn + <ea> -> <ea>
+        let (old, res) = cpu.modify_am_add(s, am, val);
+
+        set_sr_flags_add(cpu, s, old, val, res);
+
+    }
+}
+
+fn adda(op: u16, cpu: &mut CPU) {
+    let am = AddressingMode::decode_op(op);
+
+    let s = get_op_size_bit8(op);
+    let an = get_op_xn_hi(op).into();
+
+    match am {
+        AddressingMode::DataReg(_) | AddressingMode::AddrReg(_) => cpu.cycle(4),    // +4(0/0)
+        _ => if s != DataSize::Long { cpu.cycle(4) } else { cpu.cycle(2) }, // +4(0/0) | +2(0/0)
+    }
+
+    let val = cpu.read_am(s, am);
+
+    // <ea> + An -> An
+    cpu.modify_am_add(s, AddressingMode::AddrReg(an), val);
+}
+
+fn addi(op: u16, cpu: &mut CPU) {
+    let am = AddressingMode::decode_op(op);
+    let s = get_op_size(op);
+
+    let val = cpu.read_pc_inc_size(s);  // +4(1/0) | +8(2/0)
+
+    match am {
+        AddressingMode::DataReg(_) => {},
+        _ => cpu.cycle(4),
+    }
+
+    // <ea> + <ea> -> <ea>
+    let (old, res) = cpu.modify_am_add(s, am, val);
+
+    set_sr_flags_add(cpu, s, old, val, res);
+}
+
+fn addq(op: u16, cpu: &mut CPU) {
+    let s = get_op_size(op);
+    let am = AddressingMode::decode_op(op);
+    assert_valid_am(am, 0b1111111_11000);
+
+    let val = ((op & 0xe00) >> 9) as u32;
+
+    match am {
+        AddressingMode::DataReg(_) => {},
+        AddressingMode::AddrReg(_) => if s == DataSize::Word { cpu.cycle(4) },  // +4(0/0)
+        _ => cpu.cycle(4),  // +4(0/0)
+    }
+
+    let (old, res) = cpu.modify_am_add(s, am, val);
+
+    set_sr_flags_add(cpu, s, old, val, res);
+}
+
+fn addx(op: u16, cpu: &mut CPU) {
+    let xn_src = get_op_xn_lo(op).into();
+    let xn_dst = get_op_xn_hi(op).into();
+    let s = get_op_size(op);
+    let m = op & 0b1000 == 0;
+
+    if s == DataSize::Long {
+        cpu.cycle(4);   // +4(0/0)
+    }
+
+    if m {
+        // Dn
+        let val = cpu.reg.read_data(xn_src);
+        let x = cpu.reg.sr.x() as u32;
+
+        // Dy + Dx + X -> Dx
+        let (old, res) = cpu.modify_am_add(s, AddressingMode::DataReg(xn_dst), val + x);
+
+        set_sr_flags_add(cpu, s, old, val + x, res);
+    } else {
+        // -(An)
+        let val = cpu.read_am(s, AddressingMode::AddrPreDec(xn_src));   // +6(1/0) | +10(2/0)
+        let x = cpu.reg.sr.x() as u32;
+        cpu.cycle(2);   // +2(0/0)
+
+        // -(An) + -(An) + X -> -(An)
+        let (old, res) = cpu.modify_am_add(s, AddressingMode::AddrPreDec(xn_dst), val + x); // + 6(1/0) | +10(2/0)
+
+        set_sr_flags_add(cpu, s, old, val + x, res);
+    }
+}
+
+fn subq(op: u16, cpu: &mut CPU) {
+    let s = get_op_size(op);
+    let am = AddressingMode::decode_op(op);
+    assert_valid_am(am, 0b1111111_11000);
+
+    let val = ((op & 0xe00) >> 9) as u32;
+
+    let (old, res) = cpu.modify_am_sub(s, am, val);
+
+    set_sr_flags_sub(cpu, s, old, val, res);
+
+    match am {
+        AddressingMode::AddrReg(_) if s == DataSize::Word => cpu.cycle(4),
+        AddressingMode::DataReg(_) | AddressingMode::AddrReg(_) => {},
+        _ => cpu.cycle(4),
     }
 }
 
@@ -1267,7 +1492,7 @@ fn trap_vec(vector_num: u8, cpu: &mut CPU) {
     // ?
     cpu.read_pc_short();    // +4(1/0)
 
-    if cpu.revision != CPURevision::M68000 {
+    if cpu.revision != CPURevision::MC68000 {
         // As is written elsewhere:
         // "The MC68000 and MC68008 do not write vector offset or
         // format code to the system stack"
@@ -1316,7 +1541,7 @@ fn trap_illegal(op: u16, cpu: &mut CPU) {
 fn stop(cpu: &mut CPU) {
     if cpu.reg.sr.supervisor_state() {
         let imm_data = cpu.read_pc_inc_short(); // +4(1/0)
-        cpu.reg.sr.modify_sr(imm_data);
+        cpu.reg.sr.modify_sr(imm_data, cpu.revision);
         cpu.stopped = true;
     } else {
         trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
@@ -1326,7 +1551,7 @@ fn stop(cpu: &mut CPU) {
 fn reset(cpu: &mut CPU) {
     if cpu.reg.sr.supervisor_state() {
         let assert_cycles = match cpu.revision {
-            CPURevision::M68000 | CPURevision::M68010 => 124,
+            CPURevision::MC68000 | CPURevision::MC68010 => 124,
             _ => 512,
         };
 
@@ -1374,9 +1599,9 @@ fn get_displacement_no_inc(cpu: &mut CPU, disp_tmp: u16) -> i32 {
     if disp_tmp == 0x00 { 
         cpu.read_pc_short().sign_extend() as i32  // +4(1/0)
     } else if disp_tmp == 0xff
-        && (cpu.revision == CPURevision::M68020
-        ||  cpu.revision == CPURevision::M68030
-        ||  cpu.revision == CPURevision::M68040)
+        && (cpu.revision == CPURevision::MC68020
+        ||  cpu.revision == CPURevision::MC68030
+        ||  cpu.revision == CPURevision::MC68040)
     {
         cpu.read_pc_long() as i32          // +8(2/0)
     } else {
@@ -1472,8 +1697,8 @@ fn rte(cpu: &mut CPU) {
     if cpu.reg.sr.supervisor_state() {
         // (SP) -> SR;
         // SP + 2 -> PC;
-        let val = cpu.pop_sp_short();
-        cpu.reg.sr.modify_sr(val);           // +4(1/0)
+        let val = cpu.pop_sp_short();   // +4(1/0)
+        cpu.reg.sr.modify_sr(val, cpu.revision);
 
         // SP + 4 -> SP;
         // Restore state and deallocate stack according to (SP)

@@ -4,7 +4,7 @@ use elf::{ElfBytes, endian::AnyEndian};
 use r68k::cpu::*;
 
 fn main() {
-    let mut cpu = CPU::new(CPURevision::M68000);
+    let mut cpu = CPU::new(CPURevision::MC68000);
 
     let args: Vec<String> = args().collect();
 
