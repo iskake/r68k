@@ -16,7 +16,7 @@ impl std::fmt::Display for DataSize {
 }
 
 impl DataSize {
-    /// Size of the given data size in bytes
+    /// Size of the given data size in bytes.
     /// 
     /// |Size |sizeof |
     /// |-----|-------|
@@ -45,67 +45,67 @@ impl DataSize {
             DataSize::Long => 0xffff_ffff,
         }
     }
+
+    /// 32-bit bitmask of the signed representation given data size.
+    /// 
+    /// |Size | Mask         |
+    /// |-----|--------------|
+    /// |byte | `0x7f`       |
+    /// |word | `0x7fff`     |
+    /// |long | `0x7fffffff`|
+    pub fn signed_mask(self) -> u32 {
+        match self {
+            DataSize::Byte => 0x0000_007f,
+            DataSize::Word => 0x0000_7fff,
+            DataSize::Long => 0x7fff_ffff,
+        }
+    }
+
+    /// Sign bit of the given data size.
+    /// 
+    /// |Size | Mask         |
+    /// |-----|--------------|
+    /// |byte | `0x80`       |
+    /// |word | `0x8000`     |
+    /// |long | `0x80000000`|
+    pub fn sign_bit(self) -> u32 {
+        match self {
+            DataSize::Byte => 0x0000_0080,
+            DataSize::Word => 0x0000_8000,
+            DataSize::Long => 0x8000_0000,
+        }
+    }
 }
 
 impl From<u8> for DataSize {
     fn from(value: u8) -> Self {
-        assert!(value <= 2, "Data size must be one of 0, 1, or 2.");
-
         match value {
             0 => DataSize::Byte,
             1 => DataSize::Word,
             2 => DataSize::Long,
-            _ => unreachable!(),
+            _ => panic!("Data size must be one of 0, 1, or 2"),
         }
     }
 }
 
 impl Into<u8> for DataSize {
     fn into(self) -> u8 {
-        match self {
-            DataSize::Byte => 0,
-            DataSize::Word => 1,
-            DataSize::Long => 2,
-        }
+        self as u8
     }
 }
 
 impl Into<usize> for DataSize {
     fn into(self) -> usize {
-        match self {
-            DataSize::Byte  => 0,
-            DataSize::Word => 1,
-            DataSize::Long  => 2,
-        }
+        self as usize
     }
 }
 
 pub fn is_zero(val: u32, size: DataSize) -> bool {
-    // Assuming size: 0 is byte and size: 2 is long
-
-    // Shift amounts:
-    // - b: 8*3 = 24
-    // - s: 8*2 = 16
-    // - l: 8*0 = 0
-    let size: usize = size.into();
-    let s = 1 << size;
-    let shift = ((s & 0b11) | ((s & 1) << 1)) * 8;
-    val & (0xffff_ffff >> shift) == 0
+    (val & size.mask()) == 0
 }
 
 pub fn is_negative(val: u32, size: DataSize) -> bool {
-    // Assuming size: 0 is byte and size: 2 is long
-
-    // We want to mask the top bit of either byte no. 0 (byte), 1 (short), or 4 (long)
-    // Tested bit (hex):
-    // - b: xxxx_xx8x
-    // - s: xxxx_8xxx
-    // - l: 8xxx_xxxx
-    let size: usize = size.into();
-    let shift = ((1 << size) & !0b1) * 8;
-    let mask = 0x80 << shift;
-
-    val & mask != 0
+    (val & size.sign_bit()) != 0
 }
 
 pub trait SignExtend {
