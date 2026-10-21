@@ -419,10 +419,10 @@ impl Display for Instruction {
                 }
             },
 
-            NEGX  { op } => todo!(),
-            CLR   { op } => todo!(),
-            NEG   { op } => todo!(),
+            NEG   { op } => write!(f, "neg{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
+            NEGX  { op } => write!(f, "negx{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
             NOT   { op } => write!(f, "not{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
+            CLR   { op } => todo!(),
             EXT   { op } => todo!(),
             NBCD  { op } => todo!(),
             SWAP  { op } => todo!(),
@@ -645,8 +645,8 @@ impl Instruction {
             Instruction::CMPA  { op } => todo!(),
             Instruction::CMPM  { op } => todo!(),
             // logical (single)
-            Instruction::NEGX  { op } => todo!(),
-            Instruction::NEG   { op } => todo!(),
+            Instruction::NEGX  { op } => neg(op, cpu),
+            Instruction::NEG   { op } => neg(op, cpu),
             Instruction::NOT   { op } => not(op, cpu),
             // bit
             Instruction::BTST  { op } => btst(op, cpu),
@@ -1193,6 +1193,53 @@ define_opi_to!(sr,  andi_to_sr,  &);
 define_opi_to!(ccr, eori_to_ccr, ^);
 define_opi_to!(sr,  eori_to_sr,  ^);
 
+fn neg(op: u16, cpu: &mut CPU) {
+    let s = get_op_size(op);
+    let am = AddressingMode::decode_op(op);
+    assert_valid_am(am, 0b1011111_11000);
+
+    match am {
+        AddressingMode::DataReg(_) => if s == DataSize::Long { cpu.cycle(2) },      // +0(0/0) | +2(0/0)
+        _ => if s == DataSize::Long { cpu.cycle(8) } else { cpu.cycle(4) }, // +8(0/0) (?: should be write(s)?)
+    }
+
+    let negx = (((op & 0b100_00_000_000) >> 10) ^ 1) as u32;
+    let (old, res) = cpu.modify_am_neg(s, am, negx);
+
+    let a = 0;
+    let b = old & s.mask();
+    let r = res & s.mask();
+
+    let z = r == 0;
+    let n = r & s.sign_bit() != 0;
+    let v = ((a ^ b) & (a ^ r) & s.sign_bit()) != 0;
+    let c = !z;
+
+    cpu.reg.sr.modify_x(c);
+    cpu.reg.sr.modify_n(n);
+    cpu.reg.sr.modify_z(z);
+    cpu.reg.sr.modify_v(v);
+    cpu.reg.sr.modify_c(c);
+}
+
+fn not(op: u16, cpu: &mut CPU) {
+    let s = get_op_size(op);
+    let am = AddressingMode::decode_op(op);
+    assert_valid_am(am, 0b1011111_11000);
+
+    match am {
+        AddressingMode::DataReg(_) => if s == DataSize::Long { cpu.cycle(2) },      // +0(0/0) | +2(0/0)
+        _ => if s == DataSize::Long { cpu.cycle(8) } else { cpu.cycle(4) }, // +8(0/0) (?: should be write(s)?)
+    }
+
+    let (_, res) = cpu.modify_am_not(s, am);
+
+    cpu.reg.sr.modify_n(is_negative(res, s));
+    cpu.reg.sr.modify_z(is_zero(res, s));
+    cpu.reg.sr.clear_v();
+    cpu.reg.sr.clear_c();
+}
+
 macro_rules! define_bop {
     ($fn_name: ident, $modify_am_fn: ident, $modify: expr) => {
         fn $fn_name(op: u16, cpu: &mut CPU) {
@@ -1257,22 +1304,6 @@ fn pea(op: u16, cpu: &mut CPU) {
     // SP - 4 -> SP;
     // <ea> -> (SP)
     cpu.push_sp_long(val);
-}
-
-fn not(op: u16, cpu: &mut CPU) {
-    let s = get_op_size(op);
-    let am = AddressingMode::decode_op(op);
-    assert_valid_am(am, 0b1011111_11000);
-
-    let res = !cpu.read_am(s, am);
-    cpu.cycle_when_long(s, 1);
-    cpu.write_am(s, am, res);
-    cpu.cycle_when_long(s, 1);
-
-    cpu.reg.sr.modify_n(is_negative(res, s));
-    cpu.reg.sr.modify_z(is_zero(res, s));
-    cpu.reg.sr.clear_v();
-    cpu.reg.sr.clear_c();
 }
 
 /// Cycles: 30(3/3) (MC68000)

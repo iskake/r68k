@@ -103,8 +103,16 @@ pub struct CPU {
     addr_bus_mask: u32,
 }
 
+macro_rules! op_add { ($a:expr, $b:expr) => { $a + $b }; }
+macro_rules! op_sub { ($a:expr, $b:expr) => { $a - $b }; }
+macro_rules! op_or  { ($a:expr, $b:expr) => { $a | $b }; }
+macro_rules! op_and { ($a:expr, $b:expr) => { $a & $b }; }
+macro_rules! op_eor { ($a:expr, $b:expr) => { $a ^ $b }; }
+macro_rules! op_neg { ($a:expr, $b:expr) => {  0 - $a - $b }; }
+macro_rules! op_not { ($a:expr) => { !$a }; }
+
 macro_rules! define_modify_am_op {
-    ($fn_name: ident, $op: tt) => {
+    ($fn_name: ident, $op: ident) => {
         pub fn $fn_name(&mut self, size: DataSize, am: AddressingMode, val: u32) -> (u32, u32) {
             let addr = self.calculate_am_operand(size, am);
 
@@ -112,14 +120,14 @@ macro_rules! define_modify_am_op {
                 // 0(0/0)
                 AddressingMode::DataReg(dn) => {
                     let previous = self.reg.read_data(dn);
-                    let result = previous $op val;
+                    let result = $op!(previous, val);
                     self.reg.write_data(dn, size, result);
                     (previous, result)
                 },
                 // 0(0/0)
                 AddressingMode::AddrReg(an) => {
                     let previous = self.reg.read_address(an);
-                    let result = previous $op val;
+                    let result = $op!(previous, val);
                     self.reg.write_address(an, size, result);
                     (previous, result)
                 },
@@ -129,32 +137,30 @@ macro_rules! define_modify_am_op {
                 // 4(0/1) | 8(0/2)
                 _ => {
                     let previous = self.read_mem_size_internal(size, addr);
-                    let result = previous $op val;
+                    let result = $op!(previous, val);
                     self.write_mem_size(size, addr, result);
                     (previous, result)
                 }
             }
         }
     };
-}
 
-macro_rules! define_modify_am_bit {
-    ($fn_name: ident, $bit_macro: ident) => {
-        pub fn $fn_name(&mut self, size: DataSize, am: AddressingMode, bit: u32) -> (u32, u32) {
+    ($fn_name: ident, $op: ident, single) => {
+        pub fn $fn_name(&mut self, size: DataSize, am: AddressingMode) -> (u32, u32) {
             let addr = self.calculate_am_operand(size, am);
 
             match am {
                 // 0(0/0)
                 AddressingMode::DataReg(dn) => {
                     let previous = self.reg.read_data(dn);
-                    let result = $bit_macro!(previous, bit);
+                    let result = $op!(previous);
                     self.reg.write_data(dn, size, result);
                     (previous, result)
                 },
                 // 0(0/0)
                 AddressingMode::AddrReg(an) => {
                     let previous = self.reg.read_address(an);
-                    let result = $bit_macro!(previous, bit);
+                    let result = $op!(previous);
                     self.reg.write_address(an, size, result);
                     (previous, result)
                 },
@@ -164,7 +170,7 @@ macro_rules! define_modify_am_bit {
                 // 4(0/1) | 8(0/2)
                 _ => {
                     let previous = self.read_mem_size_internal(size, addr);
-                    let result = $bit_macro!(previous, bit);
+                    let result = $op!(previous);
                     self.write_mem_size(size, addr, result);
                     (previous, result)
                 }
@@ -648,15 +654,18 @@ impl CPU {
         }
     }
 
-    define_modify_am_op!(modify_am_add, +);
-    define_modify_am_op!(modify_am_sub, -);
-    define_modify_am_op!(modify_am_or,  |);
-    define_modify_am_op!(modify_am_and, &);
-    define_modify_am_op!(modify_am_eor, ^);
+    define_modify_am_op!(modify_am_add, op_add);
+    define_modify_am_op!(modify_am_sub, op_sub);
+    define_modify_am_op!(modify_am_or,  op_or);
+    define_modify_am_op!(modify_am_and, op_and);
+    define_modify_am_op!(modify_am_eor, op_eor);
 
-    define_modify_am_bit!(modify_am_set, set_bit);
-    define_modify_am_bit!(modify_am_clr, clear_bit);
-    define_modify_am_bit!(modify_am_chg, change_bit);
+    define_modify_am_op!(modify_am_neg, op_neg);
+    define_modify_am_op!(modify_am_not, op_not, single);
+
+    define_modify_am_op!(modify_am_set, set_bit);
+    define_modify_am_op!(modify_am_clr, clear_bit);
+    define_modify_am_op!(modify_am_chg, change_bit);
 
     /// Push an element on top of the stack.
     /// Decreases the user stack pointer (a7) by 2.
@@ -776,14 +785,14 @@ impl CPU {
         let post_cycles = self.cycles;
         let post_cycles_read = self.read_cycles;
         let post_cycles_write= self.write_cycles;
-        println!();
+        // println!();
         println!(
             "{}({}/{})",
             post_cycles - pre_cycles,
             post_cycles_read - pre_cycles_read,
             post_cycles_write - pre_cycles_write
         );
-        self.print_state();
+        // self.print_state();
 
         true
     }
@@ -800,13 +809,5 @@ impl CPU {
     fn cycle_write(&mut self) {
         self.cycle(4);
         self.write_cycles += 1;
-    }
-
-    /// Cycle only when size is .l
-    fn cycle_when_long(&mut self, size: DataSize, amount: usize) {
-        match size {
-            DataSize::Long => self.cycle(amount),
-            _ => {}
-        }
     }
 }
