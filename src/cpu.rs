@@ -2,6 +2,7 @@ use crate::{bits::{DataSize, SignExtend}, cpu::reg::*, cpu::inst::AddressingMode
 
 mod reg;
 mod inst;
+mod opcode;
 
 const CPU_VECTOR_SIZE: u32 = 4;
 
@@ -713,7 +714,7 @@ impl CPU {
 
     fn fetch_and_run(&mut self) {
         let op = self.read_pc_inc_short();
-        let inst = inst::decode_opcode(op);
+        let inst = opcode::decode_opcode(op);
         println!("  Running instruction: {inst} ({op:016b})");
         inst.run(self);
     }
