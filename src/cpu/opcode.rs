@@ -222,10 +222,10 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
             }
         },
         0b1011 => {
-            if d && m == 0b001 {
-                CMPM { op }
-            } else if s == 0b11 {
+            if s == 0b11 {
                 CMPA { op }
+            } else if d && m == 0b001 {
+                CMPM { op }
             } else if !d {
                 CMP { op }
             } else {

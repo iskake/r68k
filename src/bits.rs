@@ -149,3 +149,11 @@ impl SignExtend for u16 {
         self as i16 as i32 as u32
     }
 }
+
+pub fn sign_extend_size(val: u32, size: DataSize) -> u32 {
+    match size {
+        DataSize::Byte => (val as u8).sign_extend(),
+        DataSize::Word => (val as u16).sign_extend(),
+        DataSize::Long => val,
+    }
+}

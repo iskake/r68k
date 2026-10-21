@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::{bits::{DataSize, SignExtend, is_negative, is_zero}, cpu::{CPU, CPU_VECTOR_SIZE, CPURevision, CPUVector, RegisterNum, opcode::*}};
+use crate::{bits::{DataSize, SignExtend, is_negative, is_zero, sign_extend_size}, cpu::{CPU, CPU_VECTOR_SIZE, CPURevision::{self, MC68000}, CPUVector, RegisterNum, opcode::*}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Condition {
@@ -354,7 +354,30 @@ impl Display for Instruction {
             EOR   { op } => display_a_op_b!(f, "eor", op),
             AND   { op } => display_a_op_b!(f, "and", op),
 
-            CMPI  { op } => todo!(),
+            CMPI  { op } => {
+                let s = get_op_size(*op);
+                let am = AddressingMode::decode_op(*op);
+                write!(f, "cmpi{} #imm,{}", s, am)
+            },
+            CMPM  { op } => {
+                let s = get_op_size(*op);
+                let ay = get_op_xn_lo(*op);
+                let ax = get_op_xn_hi(*op);
+                write!(f, "cmpm{} (a{})+,(a{})+", s, ay, ax)
+            },
+            CMP   { op } => {
+                let s = get_op_size(*op);
+                let am = AddressingMode::decode_op(*op);
+                let dn = get_op_xn_hi(*op);
+                write!(f, "cmp{} {},d{}", s, am, dn)
+            },
+            CMPA  { op } => {
+                let s = get_op_size_bit8(*op);
+                let am = AddressingMode::decode_op(*op);
+                let an = get_op_xn_hi(*op);
+                write!(f, "cmpa{} {},a{}", s, am, an)
+            },
+
             BTST  { op } => display_bop!(f, "btst", op),
             BCHG  { op } => display_bop!(f, "bchg", op),
             BCLR  { op } => display_bop!(f, "bclr", op),
@@ -558,9 +581,6 @@ impl Display for Instruction {
             DIVU  { op } => todo!(),
             DIVS  { op } => todo!(),
             SBCD  { op } => todo!(),
-            CMPM  { op } => todo!(),
-            CMP   { op } => todo!(),
-            CMPA  { op } => todo!(),
             MULU  { op } => todo!(),
             MULS  { op } => todo!(),
             ABCD  { op } => todo!(),
@@ -640,10 +660,10 @@ impl Instruction {
             Instruction::ANDIToCCR         => andi_to_ccr(cpu),
             Instruction::EORIToSR          => eori_to_sr(cpu),
             Instruction::EORIToCCR         => eori_to_ccr(cpu),
-            Instruction::CMP   { op } => todo!(),
-            Instruction::CMPI  { op } => todo!(),
-            Instruction::CMPA  { op } => todo!(),
-            Instruction::CMPM  { op } => todo!(),
+            Instruction::CMP   { op } => cmp(op, cpu),
+            Instruction::CMPI  { op } => cmpi(op, cpu),
+            Instruction::CMPA  { op } => cmpa(op, cpu),
+            Instruction::CMPM  { op } => cmpm(op, cpu),
             // logical (single)
             Instruction::NEGX  { op } => neg(op, cpu),
             Instruction::NEG   { op } => neg(op, cpu),
@@ -727,11 +747,7 @@ fn movea(op: u16, cpu: &mut CPU) {
     let an = get_op_xn_hi(op).into();
 
     let val = cpu.read_am(s, am_src);
-    let src_val = if let DataSize::Word = s {
-        (val as u16).sign_extend()
-    } else {
-        val
-    };
+    let src_val = sign_extend_size(val, s);
 
     cpu.reg.write_address(an, DataSize::Long, src_val);
 }
@@ -789,11 +805,7 @@ fn movem(op: u16, cpu: &mut CPU) {
                         todo!();
                     }
                 };
-                let val = if let DataSize::Word = size {
-                    (w as u16).sign_extend()
-                } else {
-                    w
-                };
+                let val = sign_extend_size(w, size);
 
                 let reg_num = (if reversed {7 - i & 0b111} else {i & 0b111}).into();
                 let addr_reg = if reversed { i & 0b1000 == 0 } else { i & 0b1000 != 0};
@@ -1192,6 +1204,86 @@ define_opi_to!(ccr, andi_to_ccr, &);
 define_opi_to!(sr,  andi_to_sr,  &);
 define_opi_to!(ccr, eori_to_ccr, ^);
 define_opi_to!(sr,  eori_to_sr,  ^);
+
+fn cmp(op: u16, cpu: &mut CPU) {
+    let s = get_op_size(op);
+    let am = AddressingMode::decode_op(op);
+    // (all modes are valid)
+    let dn = get_op_xn_hi(op).into();
+
+    if s == DataSize::Long {
+        cpu.cycle(2);   // +2(0/0)
+    }
+
+    let src = cpu.read_am(s, am);
+    let dst = cpu.reg.read_data(dn);
+    let res = dst - src;
+
+    // x is modified in `sub`, but NOT in `cmp`
+    let old_x = cpu.reg.sr.x(); 
+    set_sr_flags_sub(cpu, s, dst, src, res);
+    cpu.reg.sr.modify_x(old_x);
+}
+
+fn cmpa(op: u16, cpu: &mut CPU) {
+    let s = get_op_size_bit8(op);
+    let am = AddressingMode::decode_op(op);
+    // (all modes are valid)
+    let an = get_op_xn_hi(op).into();
+
+    cpu.cycle(2);   // +2(0/0)
+
+    let src_pre = cpu.read_am(s, am);
+    let src = sign_extend_size(src_pre, s);
+
+    let dst = cpu.reg.read_address(an);
+
+    let res = dst - src;
+
+    // x is modified in `sub`, but NOT in `cmp`
+    let old_x = cpu.reg.sr.x(); 
+    set_sr_flags_sub(cpu, s, dst, src, res);
+    cpu.reg.sr.modify_x(old_x);
+}
+
+fn cmpm(op: u16, cpu: &mut CPU) {
+    let s = get_op_size(op);
+    let ay = get_op_xn_lo(op).into();
+    let ax = get_op_xn_hi(op).into();
+
+    let src = cpu.read_am(s, AddressingMode::AddrPostInc(ax));
+    let dst = cpu.read_am(s, AddressingMode::AddrPostInc(ay));
+    let res = dst - src;
+
+    // x is modified in `sub`, but NOT in `cmp`
+    let old_x = cpu.reg.sr.x(); 
+    set_sr_flags_sub(cpu, s, dst, src, res);
+    cpu.reg.sr.modify_x(old_x);
+}
+
+fn cmpi(op: u16, cpu: &mut CPU) {
+    let s = get_op_size(op);
+    let am = AddressingMode::decode_op(op);
+
+    if cpu.revision == MC68000 {
+        assert_valid_am(am, 0b1011111_11000);
+    } else {
+        assert_valid_am(am, 0b1011111_11011);
+    }
+
+    if let AddressingMode::DataReg(_) = am && s == DataSize::Long {
+        cpu.cycle(2);   // +2(0/0)
+    }
+
+    let src = cpu.read_pc_inc_size(s);
+    let dst = cpu.read_am(s, am);
+    let res = dst - src;
+
+    // x is modified in `sub`, but NOT in `cmp`
+    let old_x = cpu.reg.sr.x(); 
+    set_sr_flags_sub(cpu, s, dst, src, res);
+    cpu.reg.sr.modify_x(old_x);
+}
 
 fn neg(op: u16, cpu: &mut CPU) {
     let s = get_op_size(op);
