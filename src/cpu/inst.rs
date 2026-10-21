@@ -200,10 +200,16 @@ impl AddressingMode {
 #[derive(Debug)]
 pub enum Instruction {
     // 0000
+    ORIToCCR,
+    ORIToSR,
     ORI   { op: u16 },
+    ANDIToCCR,
+    ANDIToSR,
     ANDI  { op: u16 },
     SUBI  { op: u16 },
     ADDI  { op: u16 },
+    EORIToCCR,
+    EORIToSR,
     EORI  { op: u16 },
     CMPI  { op: u16 },
     BTST  { op: u16 },
@@ -290,13 +296,42 @@ pub enum Instruction {
     Undefined { op: u16 },
 }
 
+macro_rules! display_a_op_b {
+    ($f:expr, $inst:expr, $op:expr) => {
+        {
+            let am = AddressingMode::decode_op(*$op);
+            let m = get_op_m_hi(*$op);
+            let s: DataSize = (m & 0b11).into();
+            let dn = get_op_xn_hi(*$op);
+            if m & 0b100 == 0 {
+                // <ea> + Dn -> Dn
+                write!($f, "{}{} {},d{}", $inst, s, am, dn)
+            } else {
+                // Dn + <ea> -> <ea>
+                write!($f, "{}{} d{},{}", $inst, s, dn, am)
+            }
+        }
+    };
+}
+
 impl Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use Instruction::*;
         match self {
-            ORI   { op } => write!(f, "ori{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
-            ANDI  { op } => todo!(),
-            EORI  { op } => todo!(),
+            ORIToCCR  => write!(f, "ori.b #imm,ccr"),
+            ORIToSR   => write!(f, "ori.w #imm,sr"),
+            ANDIToCCR => write!(f, "andi.b #imm,ccr"),
+            ANDIToSR  => write!(f, "andi.w #imm,sr"),
+            EORIToCCR => write!(f, "eori.b #imm,ccr"),
+            EORIToSR  => write!(f, "eori.w #imm,sr"),
+
+            ORI   { op } => write!(f, "ori{} #imm,{}", get_op_size(*op), AddressingMode::decode_op(*op)),
+            ANDI  { op } => write!(f, "andi{} #imm,{}", get_op_size(*op), AddressingMode::decode_op(*op)),
+            EORI  { op } => write!(f, "eori{} #imm,{}", get_op_size(*op), AddressingMode::decode_op(*op)),
+            OR    { op } => display_a_op_b!(f, "or", op),
+            EOR   { op } => display_a_op_b!(f, "eor", op),
+            AND   { op } => display_a_op_b!(f, "and", op),
+
             CMPI  { op } => todo!(),
             BTST  { op } => todo!(),
             BCHG  { op } => todo!(),
@@ -408,19 +443,7 @@ impl Display for Instruction {
                 let val = ((*op) & 0xe00) >> 9;
                 write!(f, "addq{} #{:01x},{}", s, val, am)
             },
-            ADD   { op } => {
-                let am = AddressingMode::decode_op(*op);
-                let m = get_op_m_hi(*op);
-                let s: DataSize = (m & 0b11).into();
-                let dn = get_op_xn_hi(*op);
-                if m & 0b100 == 0 {
-                    // <ea> + Dn -> Dn
-                    write!(f, "add{} {},d{}", s, am, dn)
-                } else {
-                    // Dn + <ea> -> <ea>
-                    write!(f, "add{} d{},{}", s, dn, am)
-                }
-            },
+            ADD   { op } => display_a_op_b!(f, "add", op),
             ADDX  { op } => {
                 let xn_src = get_op_xn_lo(*op);
                 let xn_dst = get_op_xn_hi(*op);
@@ -453,19 +476,7 @@ impl Display for Instruction {
                 let val = ((*op) & 0xe00) >> 9;
                 write!(f, "subq{} #{:01x},{}", s, val, am)
             },
-            SUB   { op } => {
-                let am = AddressingMode::decode_op(*op);
-                let m = get_op_m_hi(*op);
-                let s: DataSize = (m & 0b11).into();
-                let dn = get_op_xn_hi(*op);
-                if m & 0b100 == 0 {
-                    // <ea> + Dn -> Dn
-                    write!(f, "sub{} {},d{}", s, am, dn)
-                } else {
-                    // Dn + <ea> -> <ea>
-                    write!(f, "sub{} d{},{}", s, dn, am)
-                }
-            },
+            SUB   { op } => display_a_op_b!(f, "sub", op),
             SUBX  { op } => {
                 let xn_src = get_op_xn_lo(*op);
                 let xn_dst = get_op_xn_hi(*op);
@@ -525,8 +536,6 @@ impl Display for Instruction {
             DIVU  { op } => todo!(),
             DIVS  { op } => todo!(),
             SBCD  { op } => todo!(),
-            OR    { op } => todo!(),
-            EOR   { op } => todo!(),
             CMPM  { op } => todo!(),
             CMP   { op } => todo!(),
             CMPA  { op } => todo!(),
@@ -534,7 +543,6 @@ impl Display for Instruction {
             MULS  { op } => todo!(),
             ABCD  { op } => todo!(),
             EXG   { op } => todo!(),
-            AND   { op } => todo!(),
             ASd   { op } => todo!(),
             LSd   { op } => todo!(),
             ROXd  { op } => todo!(),
@@ -568,12 +576,17 @@ impl Instruction {
             Instruction::SUBX  { op } => subx(op, cpu),
             Instruction::SUBA  { op } => suba(op, cpu),
             Instruction::SUBQ  { op } => subq(op, cpu),
+            Instruction::DIVU  { op } => todo!(),
+            Instruction::DIVS  { op } => todo!(),
+            Instruction::MULU  { op } => todo!(),
+            Instruction::MULS  { op } => todo!(),
             // exceptions, etc.
             Instruction::TRAP  { op } => trap(op, cpu),
-            Instruction::TRAPV => trapv(cpu),
-            Instruction::ILLEGAL { op } => trap_illegal(op, cpu),
-            Instruction::RESET => reset(cpu),
-            Instruction::STOP  => stop(cpu),
+            Instruction::TRAPV             => trapv(cpu),
+            Instruction::ILLEGAL {op} => trap_illegal(op, cpu),
+            Instruction::CHK   { op } => todo!(),
+            Instruction::RESET             => reset(cpu),
+            Instruction::STOP              => stop(cpu),
             // jumps
             Instruction::JSR   { op } => jmp(op, cpu),
             Instruction::JMP   { op } => jmp(op, cpu),
@@ -586,54 +599,57 @@ impl Instruction {
             Instruction::RTE   => rte(cpu),
             Instruction::RTS   => rts(cpu),
             Instruction::RTR   => rtr(cpu),
+            // link
+            Instruction::LINK  { op } => link(op, cpu),
+            Instruction::UNLK  { op } => unlk(op, cpu),
             // <ea>
             Instruction::LEA   { op } => lea(op, cpu),
             Instruction::PEA   { op } => pea(op, cpu),
-
-            Instruction::NOP   => {},   // TODO: "does not begin execution until all pending bus cycles have completed."
-
-            // [Unsorted]
-            Instruction::ORI   { op } => todo!(),
-            Instruction::ANDI  { op } => todo!(),
-            Instruction::EORI  { op } => todo!(),
+            // logical
+            Instruction::ORI   { op } => ori(op, cpu),
+            Instruction::ANDI  { op } => andi(op, cpu),
+            Instruction::EORI  { op } => eori(op, cpu),
+            Instruction::OR    { op } => or(op, cpu),
+            Instruction::AND   { op } => and(op, cpu),
+            Instruction::EOR   { op } => eor(op, cpu),
+            Instruction::ORIToSR           => ori_to_sr(cpu),
+            Instruction::ORIToCCR          => ori_to_ccr(cpu),
+            Instruction::ANDIToSR          => andi_to_sr(cpu),
+            Instruction::ANDIToCCR         => andi_to_ccr(cpu),
+            Instruction::EORIToSR          => eori_to_sr(cpu),
+            Instruction::EORIToCCR         => eori_to_ccr(cpu),
+            Instruction::CMP   { op } => todo!(),
             Instruction::CMPI  { op } => todo!(),
+            Instruction::CMPA  { op } => todo!(),
+            Instruction::CMPM  { op } => todo!(),
+            // logical (single)
+            Instruction::NEGX  { op } => todo!(),
+            Instruction::NEG   { op } => todo!(),
+            Instruction::NOT   { op } => not(op, cpu),
+            // bit
             Instruction::BTST  { op } => todo!(),
             Instruction::BCHG  { op } => todo!(),
             Instruction::BCLR  { op } => todo!(),
             Instruction::BSET  { op } => todo!(),
-
-            Instruction::NEGX  { op } => todo!(),
-            Instruction::CLR   { op } => todo!(),
-            Instruction::NEG   { op } => todo!(),
-            Instruction::NOT   { op } => not(op, cpu),
-            Instruction::EXT   { op } => todo!(),
-            Instruction::NBCD  { op } => todo!(),
-            Instruction::SWAP  { op } => todo!(),
             Instruction::TAS   { op } => todo!(),
             Instruction::TST   { op } => todo!(),
-
-            Instruction::LINK  { op } => link(op, cpu),
-            Instruction::UNLK  { op } => unlk(op, cpu),
-
-            Instruction::CHK   { op } => todo!(),
-            Instruction::Scc   { op } => todo!(),
-            Instruction::DIVU  { op } => todo!(),
-            Instruction::DIVS  { op } => todo!(),
-            Instruction::SBCD  { op } => todo!(),
-            Instruction::OR    { op } => todo!(),
-            Instruction::EOR   { op } => todo!(),
-            Instruction::CMPM  { op } => todo!(),
-            Instruction::CMP   { op } => todo!(),
-            Instruction::CMPA  { op } => todo!(),
-            Instruction::MULU  { op } => todo!(),
-            Instruction::MULS  { op } => todo!(),
-            Instruction::ABCD  { op } => todo!(),
-            Instruction::EXG   { op } => todo!(),
-            Instruction::AND   { op } => todo!(),
+            // shift/rotate
             Instruction::ASd   { op } => todo!(),
             Instruction::LSd   { op } => todo!(),
             Instruction::ROXd  { op } => todo!(),
             Instruction::ROd   { op } => todo!(),
+            // bcd
+            Instruction::ABCD  { op } => todo!(),
+            Instruction::SBCD  { op } => todo!(),
+            Instruction::NBCD  { op } => todo!(),
+
+            // [Unsorted]
+            Instruction::EXT   { op } => todo!(),
+            Instruction::SWAP  { op } => todo!(),
+            Instruction::EXG   { op } => todo!(),
+            Instruction::CLR   { op } => todo!(),
+            Instruction::Scc   { op } => todo!(),
+            Instruction::NOP   => {},   // TODO: "does not begin execution until all pending bus cycles have completed."
             Instruction::Undefined { op } => trap_illegal(op, cpu),
         }
     }
@@ -924,9 +940,23 @@ fn set_sr_flags_sub(cpu: &mut CPU, s: DataSize, old: u32, val: u32, res: u32) {
     cpu.reg.sr.modify_c(c);
 }
 
+fn set_sr_flags_logical(cpu: &mut CPU, s: DataSize, _: u32, _: u32, res: u32) {
+    let r = res & s.mask();
+
+    let n = r & s.sign_bit() != 0;
+    let z = r == 0;
+    let v = false;
+    let c = false;
+
+    cpu.reg.sr.modify_n(n);
+    cpu.reg.sr.modify_z(z);
+    cpu.reg.sr.modify_v(v);
+    cpu.reg.sr.modify_c(c);
+}
+
 // Since add[a|q|...] and sub[a|q|...] are almost the exact same
-macro_rules! define_add_sub {
-    ($add:ident, $adda:ident, $addi:ident, $addq:ident, $addx:ident, $modify_am_add:ident, $set_sr_flags_add:ident) => {
+macro_rules! define_op {
+    ($add:ident, $modify_am_add:ident, $set_sr_flags_add:ident, $ea_dn_mask:expr, $dn_ea_mask:expr, $is_eor:expr) => {
         fn $add(op: u16, cpu: &mut CPU) {
             let am = AddressingMode::decode_op(op);
 
@@ -934,7 +964,11 @@ macro_rules! define_add_sub {
             let s = (m & 0b11).into();
             let dn = get_op_xn_hi(op).into();
 
-            if m & 0b100 == 0 {
+            if m & 0b100 == 0 && !$is_eor {
+                if $ea_dn_mask != 0b1111111_11111 {
+                    assert_valid_am(am, $ea_dn_mask);
+                }
+
                 if s == DataSize::Long {
                     match am {
                         AddressingMode::DataReg(_) | AddressingMode::AddrReg(_) => cpu.cycle(4),
@@ -949,7 +983,11 @@ macro_rules! define_add_sub {
 
                 $set_sr_flags_add(cpu, s, old, val, res);
             } else {
-                // TODO?: Is it possible for a Dy + Dx -> Dx (where second <ea> = Dx) to be
+                if $dn_ea_mask != 0b1111111_11111 {
+                    assert_valid_am(am, $dn_ea_mask);
+                }
+
+                // TODO?: Is it possible for a Dy ' Dx -> Dx (where second <ea> = Dx) to be
                 // decoded into this path (i.e. m & 0b100 != 0) instead of the above one?
                 if s != DataSize::Long {
                     cpu.cycle(4);   // +4(0/0) (?: should be write cycle?)
@@ -963,10 +1001,13 @@ macro_rules! define_add_sub {
                 let (old, res) = cpu.$modify_am_add(s, am, val);
 
                 $set_sr_flags_add(cpu, s, old, val, res);
-
             }
         }
+    };
+}
 
+macro_rules! define_opa {
+    ($adda:ident, $modify_am_add:ident, $set_sr_flags_add:ident) => {
         fn $adda(op: u16, cpu: &mut CPU) {
             let am = AddressingMode::decode_op(op);
 
@@ -975,7 +1016,8 @@ macro_rules! define_add_sub {
 
             match am {
                 AddressingMode::DataReg(_) | AddressingMode::AddrReg(_) => cpu.cycle(4),    // +4(0/0)
-                _ => if s != DataSize::Long { cpu.cycle(4) } else { cpu.cycle(2) }, // +4(0/0) | +2(0/0)
+                AddressingMode::Imm if s == DataSize::Long => cpu.cycle(4),                 // +4(0/0)
+                _ => if s != DataSize::Long { cpu.cycle(4) } else { cpu.cycle(2) },         // +4(0/0) | +2(0/0)
             }
 
             let val = cpu.read_am(s, am);
@@ -983,7 +1025,11 @@ macro_rules! define_add_sub {
             // <ea> ' An -> An
             cpu.$modify_am_add(s, AddressingMode::AddrReg(an), val);
         }
+    };
+}
 
+macro_rules! define_opi {
+    ($addi:ident, $modify_am_add:ident, $set_sr_flags_add:ident) => {
         fn $addi(op: u16, cpu: &mut CPU) {
             let am = AddressingMode::decode_op(op);
             let s = get_op_size(op);
@@ -992,7 +1038,11 @@ macro_rules! define_add_sub {
 
             match am {
                 AddressingMode::DataReg(_) => {},
-                _ => cpu.cycle(4),
+                _ => cpu.cycle(4),  // +4(0/0)  //? should be write?
+            }
+
+            if s == DataSize::Long {
+                cpu.cycle(4);       // +4(0/0)  //? should be writes?
             }
 
             // <ea> ' <ea> -> <ea>
@@ -1000,7 +1050,11 @@ macro_rules! define_add_sub {
 
             $set_sr_flags_add(cpu, s, old, val, res);
         }
+    };
+}
 
+macro_rules! define_opq {
+    ($addq:ident, $modify_am_add:ident, $set_sr_flags_add:ident) => {
         fn $addq(op: u16, cpu: &mut CPU) {
             let s = get_op_size(op);
             let am = AddressingMode::decode_op(op);
@@ -1014,11 +1068,19 @@ macro_rules! define_add_sub {
                 _ => cpu.cycle(4),  // +4(0/0)
             }
 
+            if s == DataSize::Long {
+                cpu.cycle(4);   // +4(0/0)
+            }
+
             let (old, res) = cpu.$modify_am_add(s, am, val);
 
             $set_sr_flags_add(cpu, s, old, val, res);
         }
+    };
+}
 
+macro_rules! define_opx {
+    ($addx:ident, $modify_am_add:ident, $set_sr_flags_add:ident) => {
         fn $addx(op: u16, cpu: &mut CPU) {
             let xn_src = get_op_xn_lo(op).into();
             let xn_dst = get_op_xn_hi(op).into();
@@ -1053,8 +1115,61 @@ macro_rules! define_add_sub {
     };
 }
 
-define_add_sub!(add, adda, addi, addq, addx, modify_am_add, set_sr_flags_add);
-define_add_sub!(sub, suba, subi, subq, subx, modify_am_sub, set_sr_flags_sub);
+macro_rules! define_opi_to {
+    (ccr, $fn_name:ident, $op:tt) => {
+        fn $fn_name(cpu: &mut CPU) {
+            let src = cpu.read_pc_inc_short() & 0xff;   // +4(1/0)
+            cpu.read_pc_short();    // +4(1/0)  (dummy read)
+            cpu.cycle(8);           // +8(0/0)
+            // Source ' CCR -> CCR
+            let dst = cpu.reg.sr.ccr() as u16;
+            cpu.reg.sr.modify_ccr(src $op dst);
+        }
+    };
+
+    (sr, $fn_name:ident, $op:tt) => {
+        fn $fn_name(cpu: &mut CPU) {
+            if cpu.reg.sr.supervisor_state() {
+                let src = cpu.read_pc_inc_short();   // +4(1/0)
+                cpu.read_pc_short();    // +4(1/0)  (dummy read)
+                cpu.cycle(8);           // +8(0/0)
+                // Source ' SR -> SR
+                let dst = cpu.reg.sr.sr();
+                cpu.reg.sr.modify_sr(src $op dst, cpu.revision);
+            } else {
+                trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
+            }
+        }
+    };
+}
+
+define_op! (add,  modify_am_add, set_sr_flags_add, 0b1111111_11111, 0b1111111_11111, false);
+define_opa!(adda, modify_am_add, set_sr_flags_add);
+define_opi!(addi, modify_am_add, set_sr_flags_add);
+define_opq!(addq, modify_am_add, set_sr_flags_add);
+define_opx!(addx, modify_am_add, set_sr_flags_add);
+
+define_op! (sub,  modify_am_sub, set_sr_flags_sub, 0b1111111_11111, 0b1111111_11111, false);
+define_opa!(suba, modify_am_sub, set_sr_flags_sub);
+define_opi!(subi, modify_am_sub, set_sr_flags_sub);
+define_opq!(subq, modify_am_sub, set_sr_flags_sub);
+define_opx!(subx, modify_am_sub, set_sr_flags_sub);
+
+define_op! (or,   modify_am_or,  set_sr_flags_logical, 0b1011111_11111, 0b0011111_11000, false);
+define_opi!(ori,  modify_am_or,  set_sr_flags_logical);
+
+define_op! (and,  modify_am_and, set_sr_flags_logical, 0b1011111_11111, 0b0011111_11000, false);
+define_opi!(andi, modify_am_and, set_sr_flags_logical);
+
+define_op! (eor,  modify_am_eor, set_sr_flags_logical, 0b0000000_00000, 0b1011111_11000, true);
+define_opi!(eori, modify_am_eor, set_sr_flags_logical);
+
+define_opi_to!(ccr, ori_to_ccr,  |);
+define_opi_to!(sr,  ori_to_sr,   |);
+define_opi_to!(ccr, andi_to_ccr, &);
+define_opi_to!(sr,  andi_to_sr,  &);
+define_opi_to!(ccr, eori_to_ccr, ^);
+define_opi_to!(sr,  eori_to_sr,  ^);
 
 fn lea(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);
@@ -1197,7 +1312,6 @@ fn jmp(op: u16, cpu: &mut CPU) {
 
     // Destination Address -> PC
     cpu.reg.pc = destination_addr;
-    println!("set PC to: {:08x}", cpu.reg.pc);
 }
 
 /// Get the displacement operand (curr byte or next word/long) following
@@ -1224,7 +1338,6 @@ fn get_displacement_no_inc(cpu: &mut CPU, disp_tmp: u16) -> i32 {
 fn bra(op: u16, cpu: &mut CPU) {
     let disp_tmp = op & 0x00ff;
     let displacement = get_displacement_no_inc(cpu, disp_tmp); // .b, .w: +4(1/0) | .l: +8(2/0)
-    println!("DISPLACE: {displacement:08x}");
 
     // PC + d_n -> PC
     cpu.reg.pc = cpu.reg.pc.wrapping_add_signed(displacement);

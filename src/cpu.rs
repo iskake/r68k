@@ -613,6 +613,9 @@ impl CPU {
 
     define_modify_am_op!(modify_am_add, +);
     define_modify_am_op!(modify_am_sub, -);
+    define_modify_am_op!(modify_am_or,  |);
+    define_modify_am_op!(modify_am_and, &);
+    define_modify_am_op!(modify_am_eor, ^);
 
     /// Push an element on top of the stack.
     /// Decreases the user stack pointer (a7) by 2.
@@ -715,7 +718,7 @@ impl CPU {
     fn fetch_and_run(&mut self) {
         let op = self.read_pc_inc_short();
         let inst = opcode::decode_opcode(op);
-        println!("  Running instruction: {inst} ({op:016b})");
+        print!("{:<22}", format!("{inst}"));
         inst.run(self);
     }
 
@@ -725,7 +728,6 @@ impl CPU {
             return false;
         }
 
-        println!();
         let pre_cycles = self.cycles;
         let pre_cycles_read = self.read_cycles;
         let pre_cycles_write= self.write_cycles;
@@ -733,13 +735,14 @@ impl CPU {
         let post_cycles = self.cycles;
         let post_cycles_read = self.read_cycles;
         let post_cycles_write= self.write_cycles;
-        self.print_state();
+        println!();
         println!(
-            "TOOK CYCLES: {}({}/{})",
+            "{}({}/{})",
             post_cycles - pre_cycles,
             post_cycles_read - pre_cycles_read,
             post_cycles_write - pre_cycles_write
         );
+        self.print_state();
 
         true
     }

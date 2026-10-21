@@ -32,7 +32,7 @@ pub(crate) fn get_op_size_bit6(op: u16) -> DataSize {
 pub(crate) fn get_op_size_bit8(op: u16) -> DataSize {
     // 0 -> 01 (.w)
     // 1 -> 10 (.l)
-    (((op & 0b1_000_000_000) >> 8) as u8 + 1).into()
+    (((op & 0b100_000_000) >> 8) as u8 + 1).into()
 }
 
 pub(crate) fn get_op_size_move(op: u16) -> DataSize {
@@ -79,11 +79,41 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
                     }
                 } else {
                     match inst_type {
-                        0b000 => ORI  { op },
-                        0b001 => ANDI { op },
+                        0b000 => if m == 0b111 && xn == 0b100 {
+                            if s == 0b00 {
+                                ORIToCCR
+                            } else if s == 0b01 {
+                                ORIToSR
+                            } else {
+                                Undefined { op }
+                            }
+                        } else {
+                            ORI  { op }
+                        },
+                        0b001 => if m == 0b111 && xn == 0b100 {
+                            if s == 0b00 {
+                                ANDIToCCR
+                            } else if s == 0b01 {
+                                ANDIToSR
+                            } else {
+                                Undefined { op }
+                            }
+                        } else {
+                            ANDI { op }
+                        },
+                        0b101 => if m == 0b111 && xn == 0b100 {
+                            if s == 0b00 {
+                                EORIToCCR
+                            } else if s == 0b01 {
+                                EORIToSR
+                            } else {
+                                Undefined { op }
+                            }
+                        } else {
+                            EORI { op }
+                        },
                         0b010 => SUBI { op },
                         0b011 => ADDI { op },
-                        0b101 => EORI { op },
                         0b110 => CMPI { op },
                         0b100 => {
                             match s {
@@ -199,7 +229,13 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
             } else if !d {
                 CMP { op }
             } else {
-                EOR { op }
+                if m_hi & 0b100 != 0 {
+                    // eor only has <ea> ^ dn -> <ea>
+                    EOR { op }
+                } else {
+                    Undefined { op }
+                }
+
             }
         },
         0b1100 => {
