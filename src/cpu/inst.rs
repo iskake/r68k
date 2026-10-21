@@ -1519,10 +1519,15 @@ fn rte(cpu: &mut CPU) {
         let val = cpu.pop_sp_short();   // +4(1/0)
         cpu.reg.sr.modify_sr(val, cpu.revision);
 
+        // (SP) -> PC;
         // SP + 4 -> SP;
-        // Restore state and deallocate stack according to (SP)
         let old_state = cpu.pop_sp_long();  // +8(2/0)
-        todo!("rte with {old_state:08x}");
+        cpu.reg.pc = old_state;
+
+        if cpu.revision != CPURevision::MC68000 {
+            // Restore state and deallocate stack according to (SP)
+            todo!("rte with {old_state:08x}");
+        }
     } else {
         trap_vec(CPUVector::PrivelegeViolation as u8, cpu);
     }
