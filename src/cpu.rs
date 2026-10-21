@@ -241,13 +241,32 @@ impl CPU {
             if self.reg.sr.supervisor_state() { "ssp" } else { "usp" }
         );
         println!(
+            "     [{:08x}]    [{:08x}]    [{:08x}]    [{:08x}]    [{:08x}]    [{:08x}]    [{:08x}]    [{:08x}]",
+            self.read_mem_long_immutable(self.reg.a0),
+            self.read_mem_long_immutable(self.reg.a1),
+            self.read_mem_long_immutable(self.reg.a2),
+            self.read_mem_long_immutable(self.reg.a3),
+            self.read_mem_long_immutable(self.reg.a4),
+            self.read_mem_long_immutable(self.reg.a5),
+            self.read_mem_long_immutable(self.reg.a6),
+            self.read_mem_long_immutable(self.reg.read_address(RegisterNum::R7)),
+        );
+
+        let sp = if self.reg.sr.supervisor_state() { self.reg.usp } else { self.reg.ssp };
+        println!(
             "  sr: {:08b}_{:08b}                                                                           ({}: {:08x})",
             self.reg.sr.sr_hi(),
             self.reg.sr.ccr(),
             if self.reg.sr.supervisor_state() { "usp" } else { "ssp" },
-            if self.reg.sr.supervisor_state() { self.reg.usp } else { self.reg.ssp },
+            sp,
         );
-        println!("      ttsm iii    xnzvc");
+        println!(
+            "      ttsm iii    xnzvc{:>90}",
+            format!(
+                "[{:08x}]",
+                self.read_mem_long_immutable(sp)
+            )
+        );
         println!(
             "  pc: {:08x}, cycles: {}({}/{}), data bus: {:08x}, addr bus: {:08x}",
             self.reg.pc,
@@ -343,6 +362,21 @@ impl CPU {
         }
     }
 
+    /// Read a byte without mutating memory at all.
+    pub fn read_mem_byte_immutable(&self, addr: u32) -> u8 {
+        self.mmu.read_byte_immutable(addr & self.addr_bus_mask)
+    }
+
+    /// Read a short without mutating memory at all.
+    pub fn read_mem_short_immutable(&self, addr: u32) -> u16 {
+        self.mmu.read_short_immutable(addr & self.addr_bus_mask)
+    }
+
+    /// Read a long without mutating memory at all.
+    pub fn read_mem_long_immutable(&self, addr: u32) -> u32 {
+        self.mmu.read_long_immutable(addr & self.addr_bus_mask)
+    }
+
     /// Cycles: 0(0/0)
     pub fn read_mem_byte_internal(&mut self, addr: u32) -> u8 {
         self.mmu.read_byte(addr & self.addr_bus_mask)
@@ -353,9 +387,18 @@ impl CPU {
         self.mmu.read_short(addr & self.addr_bus_mask)
     }
 
-    /// Cycles: 8(2/0)
+    /// Cycles: 0(0/0)
     pub fn read_mem_long_internal(&mut self, addr: u32) -> u32 {
         self.mmu.read_long(addr & self.addr_bus_mask)
+    }
+
+    /// Cycles: 0(0/0)
+    fn read_mem_size_internal(&mut self, size: DataSize, addr: u32) -> u32 {
+        match size {
+            DataSize::Byte => self.read_mem_byte_internal(addr) as u32,
+            DataSize::Word => self.read_mem_short_internal(addr) as u32,
+            DataSize::Long => self.read_mem_long_internal(addr),
+        }
     }
 
     /// Cycles: 4(1/0)
@@ -408,15 +451,6 @@ impl CPU {
             self.cycle_read();
 
             val
-        }
-    }
-
-    /// Cycles: 0(0/0)
-    fn read_mem_size_internal(&mut self, size: DataSize, addr: u32) -> u32 {
-        match size {
-            DataSize::Byte => self.read_mem_byte_internal(addr) as u32,
-            DataSize::Word => self.read_mem_short_internal(addr) as u32,
-            DataSize::Long => self.read_mem_long_internal(addr),
         }
     }
 
@@ -785,14 +819,14 @@ impl CPU {
         let post_cycles = self.cycles;
         let post_cycles_read = self.read_cycles;
         let post_cycles_write= self.write_cycles;
-        // println!();
+        println!();
         println!(
             "{}({}/{})",
             post_cycles - pre_cycles,
             post_cycles_read - pre_cycles_read,
             post_cycles_write - pre_cycles_write
         );
-        // self.print_state();
+        self.print_state();
 
         true
     }
