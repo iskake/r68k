@@ -314,6 +314,28 @@ macro_rules! display_a_op_b {
     };
 }
 
+macro_rules! display_bop {
+    ($f:expr, $inst:expr, $op:expr) => {
+        {
+            let am = AddressingMode::decode_op(*$op);
+            let xn = get_op_xn_hi(*$op);
+
+            let s = match am {
+                AddressingMode::DataReg(_) => DataSize::Long,
+                _ => DataSize::Byte,
+            };
+
+            if xn != 0b100 {
+                // dn,<ea>
+                write!($f, "{}{} d{},{}", $inst, s, xn, am)
+            } else {
+                // #<data>,<ea>
+                write!($f, "{}{} #imm,{}", $inst, s, am)
+            }
+        } 
+    };
+}
+
 impl Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use Instruction::*;
@@ -333,10 +355,10 @@ impl Display for Instruction {
             AND   { op } => display_a_op_b!(f, "and", op),
 
             CMPI  { op } => todo!(),
-            BTST  { op } => todo!(),
-            BCHG  { op } => todo!(),
-            BCLR  { op } => todo!(),
-            BSET  { op } => todo!(),
+            BTST  { op } => display_bop!(f, "btst", op),
+            BCHG  { op } => display_bop!(f, "bchg", op),
+            BCLR  { op } => display_bop!(f, "bclr", op),
+            BSET  { op } => display_bop!(f, "bset", op),
 
             // moves
             MOVEP { op } => {
@@ -627,10 +649,10 @@ impl Instruction {
             Instruction::NEG   { op } => todo!(),
             Instruction::NOT   { op } => not(op, cpu),
             // bit
-            Instruction::BTST  { op } => todo!(),
-            Instruction::BCHG  { op } => todo!(),
-            Instruction::BCLR  { op } => todo!(),
-            Instruction::BSET  { op } => todo!(),
+            Instruction::BTST  { op } => btst(op, cpu),
+            Instruction::BCHG  { op } => bchg(op, cpu),
+            Instruction::BCLR  { op } => bclr(op, cpu),
+            Instruction::BSET  { op } => bset(op, cpu),
             Instruction::TAS   { op } => todo!(),
             Instruction::TST   { op } => todo!(),
             // shift/rotate
@@ -1170,6 +1192,50 @@ define_opi_to!(ccr, andi_to_ccr, &);
 define_opi_to!(sr,  andi_to_sr,  &);
 define_opi_to!(ccr, eori_to_ccr, ^);
 define_opi_to!(sr,  eori_to_sr,  ^);
+
+macro_rules! define_bop {
+    ($fn_name: ident, $modify_am_fn: ident, $modify: expr) => {
+        fn $fn_name(op: u16, cpu: &mut CPU) {
+            let am = AddressingMode::decode_op(op);
+            assert_valid_am(am, 0b1011111_11000);
+
+            let xn = get_op_xn_hi(op);
+
+            let (s, size_mask) = match am {
+                AddressingMode::DataReg(_) => {
+                    cpu.cycle(2);                           // +2(0/0)
+                    (DataSize::Long, 0x1f)
+                },
+                _ => (DataSize::Byte, 0b111),
+            };
+
+            let bit = if xn != 0b100 {
+                // dn,<ea>
+                let dn = xn.into();
+                cpu.reg.read_data(dn) & size_mask
+            } else {
+                // #<data>,<ea>
+                cpu.read_pc_inc_short() as u32 & size_mask  // +4(1/0)
+            };
+
+            let old = if $modify {
+                if s == DataSize::Byte {
+                    cpu.cycle(4);
+                }
+                cpu.$modify_am_fn(s, am, bit).0
+            } else {
+                cpu.read_am(s, am)
+            };
+
+            cpu.reg.sr.modify_z(old & (1 << bit) == 0);
+        }
+    };
+}
+
+define_bop!(btst, modify_am_set, false);
+define_bop!(bset, modify_am_set, true);
+define_bop!(bclr, modify_am_clr, true);
+define_bop!(bchg, modify_am_chg, true);
 
 fn lea(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);

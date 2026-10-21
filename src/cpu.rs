@@ -1,4 +1,6 @@
-use crate::{bits::{DataSize, SignExtend}, cpu::reg::*, cpu::inst::AddressingMode, mmu::MMU};
+use crate::{
+    bits::{DataSize, SignExtend}, change_bit, clear_bit, cpu::{inst::AddressingMode, reg::*}, mmu::MMU, set_bit,
+};
 
 mod reg;
 mod inst;
@@ -128,6 +130,41 @@ macro_rules! define_modify_am_op {
                 _ => {
                     let previous = self.read_mem_size_internal(size, addr);
                     let result = previous $op val;
+                    self.write_mem_size(size, addr, result);
+                    (previous, result)
+                }
+            }
+        }
+    };
+}
+
+macro_rules! define_modify_am_bit {
+    ($fn_name: ident, $bit_macro: ident) => {
+        pub fn $fn_name(&mut self, size: DataSize, am: AddressingMode, bit: u32) -> (u32, u32) {
+            let addr = self.calculate_am_operand(size, am);
+
+            match am {
+                // 0(0/0)
+                AddressingMode::DataReg(dn) => {
+                    let previous = self.reg.read_data(dn);
+                    let result = $bit_macro!(previous, bit);
+                    self.reg.write_data(dn, size, result);
+                    (previous, result)
+                },
+                // 0(0/0)
+                AddressingMode::AddrReg(an) => {
+                    let previous = self.reg.read_address(an);
+                    let result = $bit_macro!(previous, bit);
+                    self.reg.write_address(an, size, result);
+                    (previous, result)
+                },
+                // x(n/a)
+                AddressingMode::Imm => panic!("Cannot write to immediate"),
+                AddressingMode::Invalid => panic!("Cannot write with invalid addressing mode"),
+                // 4(0/1) | 8(0/2)
+                _ => {
+                    let previous = self.read_mem_size_internal(size, addr);
+                    let result = $bit_macro!(previous, bit);
                     self.write_mem_size(size, addr, result);
                     (previous, result)
                 }
@@ -616,6 +653,10 @@ impl CPU {
     define_modify_am_op!(modify_am_or,  |);
     define_modify_am_op!(modify_am_and, &);
     define_modify_am_op!(modify_am_eor, ^);
+
+    define_modify_am_bit!(modify_am_set, set_bit);
+    define_modify_am_bit!(modify_am_clr, clear_bit);
+    define_modify_am_bit!(modify_am_chg, change_bit);
 
     /// Push an element on top of the stack.
     /// Decreases the user stack pointer (a7) by 2.
