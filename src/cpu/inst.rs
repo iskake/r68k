@@ -198,29 +198,6 @@ impl AddressingMode {
 }
 
 #[derive(Debug)]
-enum VariationCCRSR {
-    Normal,
-    ToCCR,
-    ToSR,
-}
-
-impl VariationCCRSR {
-    fn from_op(op: u16) -> VariationCCRSR {
-        match op & 0b11_111_111 {
-            0b00_111_100 => VariationCCRSR::ToCCR,
-            0b01_111_100 => VariationCCRSR::ToSR,
-            _ => VariationCCRSR::Normal,
-        }
-    }
-}
-
-enum ReturnOp {
-    Exception,
-    Subroutine,
-    AndRestoreCCR,
-}
-
-#[derive(Debug)]
 pub enum Instruction {
     // 0000
     ORI   { op: u16 },
@@ -459,10 +436,16 @@ impl Display for Instruction {
                 }
             },
             ADDA  { op } => {
-            let am = AddressingMode::decode_op(*op);
-            let s = get_op_size_bit8(*op);
-            let an = get_op_xn_hi(*op);
+                let am = AddressingMode::decode_op(*op);
+                let s = get_op_size_bit8(*op);
+                let an = get_op_xn_hi(*op);
                 write!(f, "adda{} {},a{}", s, am, an)
+            },
+            SUBI  { op } => {
+                let am = AddressingMode::decode_op(*op);
+                let s = get_op_size(*op);
+
+                write!(f, "subi{} #imm,{}", s, am)
             },
             SUBQ  { op } => {
                 let s = get_op_size(*op);
@@ -470,10 +453,39 @@ impl Display for Instruction {
                 let val = ((*op) & 0xe00) >> 9;
                 write!(f, "subq{} #{:01x},{}", s, val, am)
             },
-            SUBI  { op } => write!(f, "subi TMP"),
-            SUB   { op } => write!(f, "sub TMP"),
-            SUBX  { op } => write!(f, "subx TMP"),
-            SUBA  { op } => write!(f, "suba TMP"),
+            SUB   { op } => {
+                let am = AddressingMode::decode_op(*op);
+                let m = get_op_m_hi(*op);
+                let s: DataSize = (m & 0b11).into();
+                let dn = get_op_xn_hi(*op);
+                if m & 0b100 == 0 {
+                    // <ea> + Dn -> Dn
+                    write!(f, "sub{} {},d{}", s, am, dn)
+                } else {
+                    // Dn + <ea> -> <ea>
+                    write!(f, "sub{} d{},{}", s, dn, am)
+                }
+            },
+            SUBX  { op } => {
+                let xn_src = get_op_xn_lo(*op);
+                let xn_dst = get_op_xn_hi(*op);
+                let s = get_op_size(*op);
+                let m = op & 0b1000 == 0;
+
+                if m {
+                    // ADDX Dy,Dx
+                    write!(f, "subx{} d{},d{}", s, xn_src, xn_dst)
+                } else {
+                    // ADDX -(Ay),-(Ax)
+                    write!(f, "subx{} -(a{}),-(a{})", s, xn_src, xn_dst)
+                }
+            },
+            SUBA  { op } => {
+                let am = AddressingMode::decode_op(*op);
+                let s = get_op_size_bit8(*op);
+                let an = get_op_xn_hi(*op);
+                write!(f, "suba{} {},a{}", s, am, an)
+            },
 
             Scc   { op } => todo!(),
             DBcc  { op } => {
@@ -551,10 +563,10 @@ impl Instruction {
             Instruction::ADDX  { op } => addx(op, cpu),
             Instruction::ADDA  { op } => adda(op, cpu),
             Instruction::ADDQ  { op } => addq(op, cpu),
-            Instruction::SUBI  { op } => todo!(),
-            Instruction::SUB   { op } => todo!(),
-            Instruction::SUBX  { op } => todo!(),
-            Instruction::SUBA  { op } => todo!(),
+            Instruction::SUBI  { op } => subi(op, cpu),
+            Instruction::SUB   { op } => sub(op, cpu),
+            Instruction::SUBX  { op } => subx(op, cpu),
+            Instruction::SUBA  { op } => suba(op, cpu),
             Instruction::SUBQ  { op } => subq(op, cpu),
             // exceptions, etc.
             Instruction::TRAP  { op } => trap(op, cpu),
@@ -817,10 +829,10 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
             }
         },
         0b1001 => {
-            if d && m & 0b110 == 0b000 {
-                SUBX { op }
-            } else if s == 0b11 {
+            if s == 0b11 {
                 SUBA { op }
+            } else if d && m & 0b110 == 0b000 {
+                SUBX { op }
             } else {
                 SUB { op }
             }
@@ -1305,147 +1317,137 @@ fn set_sr_flags_sub(cpu: &mut CPU, s: DataSize, old: u32, val: u32, res: u32) {
     cpu.reg.sr.modify_c(c);
 }
 
-fn add(op: u16, cpu: &mut CPU) {
-    let am = AddressingMode::decode_op(op);
+// Since add[a|q|...] and sub[a|q|...] are almost the exact same
+macro_rules! define_add_sub {
+    ($add:ident, $adda:ident, $addi:ident, $addq:ident, $addx:ident, $modify_am_add:ident, $set_sr_flags_add:ident) => {
+        fn $add(op: u16, cpu: &mut CPU) {
+            let am = AddressingMode::decode_op(op);
 
-    let m = get_op_m_hi(op);
-    let s = (m & 0b11).into();
-    let dn = get_op_xn_hi(op).into();
+            let m = get_op_m_hi(op);
+            let s = (m & 0b11).into();
+            let dn = get_op_xn_hi(op).into();
 
-    if m & 0b100 == 0 {
-        if s == DataSize::Long {
-            match am {
-                AddressingMode::DataReg(_) | AddressingMode::AddrReg(_) => cpu.cycle(4),
-                _ => cpu.cycle(2),
+            if m & 0b100 == 0 {
+                if s == DataSize::Long {
+                    match am {
+                        AddressingMode::DataReg(_) | AddressingMode::AddrReg(_) => cpu.cycle(4),
+                        _ => cpu.cycle(2),
+                    }
+                }
+
+                let val = cpu.read_am(s, am);
+
+                // <ea> ' Dn -> Dn
+                let (old, res) = cpu.$modify_am_add(s, AddressingMode::DataReg(dn), val);
+
+                $set_sr_flags_add(cpu, s, old, val, res);
+            } else {
+                // TODO?: Is it possible for a Dy + Dx -> Dx (where second <ea> = Dx) to be
+                // decoded into this path (i.e. m & 0b100 != 0) instead of the above one?
+                if s != DataSize::Long {
+                    cpu.cycle(4);   // +4(0/0) (?: should be write cycle?)
+                } else {
+                    cpu.cycle(8);   // +8(0/0) (?: should be write cycles?)
+                }
+
+                let val = cpu.reg.read_data(dn);
+
+                // Dn ' <ea> -> <ea>
+                let (old, res) = cpu.$modify_am_add(s, am, val);
+
+                $set_sr_flags_add(cpu, s, old, val, res);
+
             }
         }
 
-        let val = cpu.read_am(s, am);
+        fn $adda(op: u16, cpu: &mut CPU) {
+            let am = AddressingMode::decode_op(op);
 
-        // <ea> + Dn -> Dn
-        let (old, res) = cpu.modify_am_add(s, AddressingMode::DataReg(dn), val);
+            let s = get_op_size_bit8(op);
+            let an = get_op_xn_hi(op).into();
 
-        set_sr_flags_add(cpu, s, old, val, res);
-    } else {
-        // TODO?: Is it possible for a Dy + Dx -> Dx (where second <ea> = Dx) to be
-        // decoded into this path (i.e. m & 0b100 != 0) instead of the above one?
-        if s != DataSize::Long {
-            cpu.cycle(4);   // +4(0/0) (?: should be write cycle?)
-        } else {
-            cpu.cycle(8);   // +8(0/0) (?: should be write cycles?)
+            match am {
+                AddressingMode::DataReg(_) | AddressingMode::AddrReg(_) => cpu.cycle(4),    // +4(0/0)
+                _ => if s != DataSize::Long { cpu.cycle(4) } else { cpu.cycle(2) }, // +4(0/0) | +2(0/0)
+            }
+
+            let val = cpu.read_am(s, am);
+
+            // <ea> ' An -> An
+            cpu.$modify_am_add(s, AddressingMode::AddrReg(an), val);
         }
 
-        let val = cpu.reg.read_data(dn);
+        fn $addi(op: u16, cpu: &mut CPU) {
+            let am = AddressingMode::decode_op(op);
+            let s = get_op_size(op);
 
-        // Dn + <ea> -> <ea>
-        let (old, res) = cpu.modify_am_add(s, am, val);
+            let val = cpu.read_pc_inc_size(s);  // +4(1/0) | +8(2/0)
 
-        set_sr_flags_add(cpu, s, old, val, res);
+            match am {
+                AddressingMode::DataReg(_) => {},
+                _ => cpu.cycle(4),
+            }
 
-    }
+            // <ea> ' <ea> -> <ea>
+            let (old, res) = cpu.$modify_am_add(s, am, val);
+
+            $set_sr_flags_add(cpu, s, old, val, res);
+        }
+
+        fn $addq(op: u16, cpu: &mut CPU) {
+            let s = get_op_size(op);
+            let am = AddressingMode::decode_op(op);
+            assert_valid_am(am, 0b1111111_11000);
+
+            let val = ((op & 0xe00) >> 9) as u32;
+
+            match am {
+                AddressingMode::DataReg(_) => {},
+                AddressingMode::AddrReg(_) => if s == DataSize::Word { cpu.cycle(4) },  // +4(0/0)
+                _ => cpu.cycle(4),  // +4(0/0)
+            }
+
+            let (old, res) = cpu.$modify_am_add(s, am, val);
+
+            $set_sr_flags_add(cpu, s, old, val, res);
+        }
+
+        fn $addx(op: u16, cpu: &mut CPU) {
+            let xn_src = get_op_xn_lo(op).into();
+            let xn_dst = get_op_xn_hi(op).into();
+            let s = get_op_size(op);
+            let m = op & 0b1000 == 0;
+
+            if s == DataSize::Long {
+                cpu.cycle(4);   // +4(0/0)
+            }
+
+            if m {
+                // Dn
+                let val = cpu.reg.read_data(xn_src);
+                let x = cpu.reg.sr.x() as u32;
+
+                // Dy ' Dx + X -> Dx
+                let (old, res) = cpu.$modify_am_add(s, AddressingMode::DataReg(xn_dst), val + x);
+
+                $set_sr_flags_add(cpu, s, old, val + x, res);
+            } else {
+                // -(An)
+                let val = cpu.read_am(s, AddressingMode::AddrPreDec(xn_src));   // +6(1/0) | +10(2/0)
+                let x = cpu.reg.sr.x() as u32;
+                cpu.cycle(2);   // +2(0/0)
+
+                // -(An) ' -(An) + X -> -(An)
+                let (old, res) = cpu.$modify_am_add(s, AddressingMode::AddrPreDec(xn_dst), val + x); // + 6(1/0) | +10(2/0)
+
+                $set_sr_flags_add(cpu, s, old, val + x, res);
+            }
+        }
+    };
 }
 
-fn adda(op: u16, cpu: &mut CPU) {
-    let am = AddressingMode::decode_op(op);
-
-    let s = get_op_size_bit8(op);
-    let an = get_op_xn_hi(op).into();
-
-    match am {
-        AddressingMode::DataReg(_) | AddressingMode::AddrReg(_) => cpu.cycle(4),    // +4(0/0)
-        _ => if s != DataSize::Long { cpu.cycle(4) } else { cpu.cycle(2) }, // +4(0/0) | +2(0/0)
-    }
-
-    let val = cpu.read_am(s, am);
-
-    // <ea> + An -> An
-    cpu.modify_am_add(s, AddressingMode::AddrReg(an), val);
-}
-
-fn addi(op: u16, cpu: &mut CPU) {
-    let am = AddressingMode::decode_op(op);
-    let s = get_op_size(op);
-
-    let val = cpu.read_pc_inc_size(s);  // +4(1/0) | +8(2/0)
-
-    match am {
-        AddressingMode::DataReg(_) => {},
-        _ => cpu.cycle(4),
-    }
-
-    // <ea> + <ea> -> <ea>
-    let (old, res) = cpu.modify_am_add(s, am, val);
-
-    set_sr_flags_add(cpu, s, old, val, res);
-}
-
-fn addq(op: u16, cpu: &mut CPU) {
-    let s = get_op_size(op);
-    let am = AddressingMode::decode_op(op);
-    assert_valid_am(am, 0b1111111_11000);
-
-    let val = ((op & 0xe00) >> 9) as u32;
-
-    match am {
-        AddressingMode::DataReg(_) => {},
-        AddressingMode::AddrReg(_) => if s == DataSize::Word { cpu.cycle(4) },  // +4(0/0)
-        _ => cpu.cycle(4),  // +4(0/0)
-    }
-
-    let (old, res) = cpu.modify_am_add(s, am, val);
-
-    set_sr_flags_add(cpu, s, old, val, res);
-}
-
-fn addx(op: u16, cpu: &mut CPU) {
-    let xn_src = get_op_xn_lo(op).into();
-    let xn_dst = get_op_xn_hi(op).into();
-    let s = get_op_size(op);
-    let m = op & 0b1000 == 0;
-
-    if s == DataSize::Long {
-        cpu.cycle(4);   // +4(0/0)
-    }
-
-    if m {
-        // Dn
-        let val = cpu.reg.read_data(xn_src);
-        let x = cpu.reg.sr.x() as u32;
-
-        // Dy + Dx + X -> Dx
-        let (old, res) = cpu.modify_am_add(s, AddressingMode::DataReg(xn_dst), val + x);
-
-        set_sr_flags_add(cpu, s, old, val + x, res);
-    } else {
-        // -(An)
-        let val = cpu.read_am(s, AddressingMode::AddrPreDec(xn_src));   // +6(1/0) | +10(2/0)
-        let x = cpu.reg.sr.x() as u32;
-        cpu.cycle(2);   // +2(0/0)
-
-        // -(An) + -(An) + X -> -(An)
-        let (old, res) = cpu.modify_am_add(s, AddressingMode::AddrPreDec(xn_dst), val + x); // + 6(1/0) | +10(2/0)
-
-        set_sr_flags_add(cpu, s, old, val + x, res);
-    }
-}
-
-fn subq(op: u16, cpu: &mut CPU) {
-    let s = get_op_size(op);
-    let am = AddressingMode::decode_op(op);
-    assert_valid_am(am, 0b1111111_11000);
-
-    let val = ((op & 0xe00) >> 9) as u32;
-
-    let (old, res) = cpu.modify_am_sub(s, am, val);
-
-    set_sr_flags_sub(cpu, s, old, val, res);
-
-    match am {
-        AddressingMode::AddrReg(_) if s == DataSize::Word => cpu.cycle(4),
-        AddressingMode::DataReg(_) | AddressingMode::AddrReg(_) => {},
-        _ => cpu.cycle(4),
-    }
-}
+define_add_sub!(add, adda, addi, addq, addx, modify_am_add, set_sr_flags_add);
+define_add_sub!(sub, suba, subi, subq, subx, modify_am_sub, set_sr_flags_sub);
 
 fn lea(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);
