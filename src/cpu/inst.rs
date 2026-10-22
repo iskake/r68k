@@ -582,8 +582,8 @@ impl Display for Instruction {
             BCHG  { op } => display_bop!(f, "bchg", op),
             BCLR  { op } => display_bop!(f, "bclr", op),
             BSET  { op } => display_bop!(f, "bset", op),
-            TAS   { op } => todo!(),
-            TST   { op } => todo!(),
+            TAS   { op } => write!(f, "tas {}", AddressingMode::decode_op(*op)),
+            TST   { op } => write!(f, "tst{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
             // shift/rotate
             ASd   { op } => todo!(),
             LSd   { op } => todo!(),
@@ -707,8 +707,8 @@ impl Instruction {
             Instruction::BCHG  { op } => bchg(op, cpu),
             Instruction::BCLR  { op } => bclr(op, cpu),
             Instruction::BSET  { op } => bset(op, cpu),
-            Instruction::TAS   { op } => todo!(),
-            Instruction::TST   { op } => todo!(),
+            Instruction::TAS   { op } => tas(op, cpu),
+            Instruction::TST   { op } => tst(op, cpu),
             // shift/rotate
             Instruction::ASd   { op } => todo!(),
             Instruction::LSd   { op } => todo!(),
@@ -1410,6 +1410,45 @@ define_bop!(btst, modify_am_set, false);
 define_bop!(bset, modify_am_set, true);
 define_bop!(bclr, modify_am_clr, true);
 define_bop!(bchg, modify_am_chg, true);
+
+fn tas(op: u16, cpu: &mut CPU) {
+    let am = AddressingMode::decode_op(op);
+    assert_valid_am(am, 0b1011111_11000);
+
+    let s = DataSize::Byte;
+    let (val,_) = cpu.modify_am_tas(s, am);
+
+    match am {
+        AddressingMode::DataReg(_) => {},
+        _ => cpu.cycle(6),  // +6(0/0)
+    }
+
+    cpu.reg.sr.modify_n(is_negative(val, s));
+    cpu.reg.sr.modify_z(is_zero(val, s));
+    cpu.reg.sr.clear_v();
+    cpu.reg.sr.clear_c();
+
+    // "The operation uses a locked or read-modify-write transfer sequence.
+    // This instruction supports use of a ﬂag or semaphore to coordinate several processors."
+    // TODO: handle the above (on different cpu revisions?)
+}
+
+fn tst(op: u16, cpu: &mut CPU) {
+    let s = get_op_size(op);
+    let am = AddressingMode::decode_op(op);
+
+    if cpu.revision == MC68000 || cpu.revision == MC68010 {
+        assert_valid_am(am, 0b101111111000);
+    }
+    // (MC68020, MC68030, MC68040, and CPU32 allow all addressing modes)
+
+    let val = cpu.read_am(s, am);
+
+    cpu.reg.sr.modify_n(is_negative(val, s));
+    cpu.reg.sr.modify_z(is_zero(val, s));
+    cpu.reg.sr.clear_v();
+    cpu.reg.sr.clear_c();
+}
 
 fn lea(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);

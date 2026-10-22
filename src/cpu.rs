@@ -112,6 +112,7 @@ macro_rules! op_neg { ($a:expr, $b:expr) => {  0 - $a - $b }; }
 macro_rules! op_not { ($a:expr) => { !$a }; }
 macro_rules! op_clr { ($a:expr) => { 0x00 }; }
 macro_rules! op_set { ($a:expr) => { 0xff }; }
+macro_rules! op_tas { ($a:expr) => { $a | 0x80 }; }
 
 macro_rules! define_modify_am_op {
     ($fn_name: ident, $op: ident) => {
@@ -702,6 +703,8 @@ impl CPU {
     define_modify_am_op!(modify_am_set, set_bit);
     define_modify_am_op!(modify_am_clr, clear_bit);
     define_modify_am_op!(modify_am_chg, change_bit);
+
+    define_modify_am_op!(modify_am_tas, op_tas, single);
 
     define_modify_am_op!(modify_am_set_all, op_set, single);
     define_modify_am_op!(modify_am_clr_all, op_clr, single);
