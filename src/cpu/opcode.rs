@@ -341,6 +341,10 @@ fn decode_opcode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u
                     } else {
                         PEA { op }
                     }
+                } else if m_hi == 0b111 {
+                    // TODO: EXTB
+                    // EXTB { op }
+                    Undefined { op }
                 } else {
                     Undefined { op }
                 }

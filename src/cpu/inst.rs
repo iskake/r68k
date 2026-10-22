@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::{bits::{DataSize, SignExtend, is_negative, is_zero, sign_extend_size}, cpu::{CPU, CPU_VECTOR_SIZE, CPURevision::{self, MC68000}, CPUVector, RegisterNum, opcode::*}};
+use crate::{bits::{DataSize, SignExtend, is_negative, is_zero, sign_extend_size}, cpu::{CPU, CPU_VECTOR_SIZE, CPURevision::{self, MC68000, MC68010}, CPUVector, RegisterNum, opcode::*}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Condition {
@@ -446,7 +446,7 @@ impl Display for Instruction {
             NEGX  { op } => write!(f, "negx{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
             NOT   { op } => write!(f, "not{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
             CLR   { op } => todo!(),
-            EXT   { op } => todo!(),
+            EXT   { op } => write!(f, "ext{} d{}", get_op_size_bit6(*op), get_op_xn_lo(*op)),
             NBCD  { op } => todo!(),
             SWAP  { op } => todo!(),
             PEA   { op } => write!(f, "pea {}", AddressingMode::decode_op(*op)),
@@ -686,7 +686,7 @@ impl Instruction {
             Instruction::NBCD  { op } => todo!(),
 
             // [Unsorted]
-            Instruction::EXT   { op } => todo!(),
+            Instruction::EXT   { op } => ext(op, cpu),
             Instruction::SWAP  { op } => todo!(),
             Instruction::EXG   { op } => todo!(),
             Instruction::CLR   { op } => todo!(),
@@ -1681,4 +1681,22 @@ fn unlk(op: u16, cpu: &mut CPU) {
     // SP + 4 -> SP
     let val = cpu.pop_sp_long();    // +8(2/0)
     cpu.reg.write_address(an, DataSize::Long, val);
+}
+
+fn ext(op: u16, cpu: &mut CPU) {
+    let dn = get_op_xn_lo(op).into();
+    let s = get_op_size_bit6(op);
+
+    let val = cpu.reg.read_data(dn);
+    let res = match s {
+        DataSize::Byte => unreachable!(),
+        DataSize::Word => sign_extend_size(val, DataSize::Byte) & 0x0000_ffff,
+        DataSize::Long => sign_extend_size(val, DataSize::Word),
+    };
+    cpu.reg.write_data(dn, s, res);
+
+    cpu.reg.sr.modify_n(is_negative(res, s));
+    cpu.reg.sr.modify_z(is_zero(res, s));
+    cpu.reg.sr.clear_v();
+    cpu.reg.sr.clear_c();
 }

@@ -104,7 +104,7 @@ impl From<u8> for DataSize {
             0 => DataSize::Byte,
             1 => DataSize::Word,
             2 => DataSize::Long,
-            _ => panic!("Data size must be one of 0, 1, or 2"),
+            _ => panic!("Expected data size to be one of 0, 1, or 2, got: {}", value),
         }
     }
 }
