@@ -448,7 +448,7 @@ impl Display for Instruction {
             CLR   { op } => todo!(),
             EXT   { op } => write!(f, "ext{} d{}", get_op_size_bit6(*op), get_op_xn_lo(*op)),
             NBCD  { op } => todo!(),
-            SWAP  { op } => todo!(),
+            SWAP  { op } => write!(f, "swap.w d{}", get_op_xn_lo(*op)),
             PEA   { op } => write!(f, "pea {}", AddressingMode::decode_op(*op)),
             ILLEGAL {op} => write!(f, "illegal"),
             TAS   { op } => todo!(),
@@ -584,7 +584,23 @@ impl Display for Instruction {
             MULU  { op } => todo!(),
             MULS  { op } => todo!(),
             ABCD  { op } => todo!(),
-            EXG   { op } => todo!(),
+            EXG   { op } => {
+                let xy = get_op_xn_lo(*op);
+                let xx = get_op_xn_hi(*op);
+                let m_hi = (op & 0b11_000_000) >> 6;
+                let m_lo = (op & 0b1_000) != 0;
+
+                if m_hi == 0b01 && !m_lo {
+                    // Dx <-> Dy
+                    write!(f, "exg d{},d{}", xx, xy)
+                } else if m_hi == 0b01 {
+                    // Ax <-> Ay
+                    write!(f, "exg a{},a{}", xx, xy)
+                } else {
+                    // Dx <-> Ay
+                    write!(f, "exg d{},a{}", xx, xy)
+                }
+            },
             ASd   { op } => todo!(),
             LSd   { op } => todo!(),
             ROXd  { op } => todo!(),
@@ -684,13 +700,14 @@ impl Instruction {
             Instruction::ABCD  { op } => todo!(),
             Instruction::SBCD  { op } => todo!(),
             Instruction::NBCD  { op } => todo!(),
-
-            // [Unsorted]
+            // register modification
             Instruction::EXT   { op } => ext(op, cpu),
-            Instruction::SWAP  { op } => todo!(),
-            Instruction::EXG   { op } => todo!(),
+            Instruction::SWAP  { op } => swap(op, cpu),
+            Instruction::EXG   { op } => exg(op, cpu),
+            // clear/set
             Instruction::CLR   { op } => todo!(),
             Instruction::Scc   { op } => todo!(),
+            // other
             Instruction::NOP   => {},   // TODO: "does not begin execution until all pending bus cycles have completed."
             Instruction::Undefined { op } => trap_illegal(op, cpu),
         }
@@ -1699,4 +1716,50 @@ fn ext(op: u16, cpu: &mut CPU) {
     cpu.reg.sr.modify_z(is_zero(res, s));
     cpu.reg.sr.clear_v();
     cpu.reg.sr.clear_c();
+}
+
+fn swap(op: u16, cpu: &mut CPU) {
+    let dn = get_op_xn_lo(op).into();
+
+    let val = cpu.reg.read_data(dn);
+    let val_hi = (val & 0xffff_0000) >> 8;
+    let val_lo = val & 0x0000_ffff;
+    let res = (val_lo << 8) | val_hi;
+
+    let s = DataSize::Long;
+    cpu.reg.write_data(dn, s, res);
+
+    cpu.reg.sr.modify_n(is_negative(res, s));
+    cpu.reg.sr.modify_z(is_zero(res, s));
+    cpu.reg.sr.clear_v();
+    cpu.reg.sr.clear_c();
+}
+
+fn exg(op: u16, cpu: &mut CPU) {
+    let xy = get_op_xn_lo(op).into();
+    let xx = get_op_xn_hi(op).into();
+    let m_hi = (op & 0b11_000_000) >> 6;
+    let m_lo = (op & 0b1_000) != 0;
+
+    cpu.cycle(2);
+
+    if m_hi == 0b01 && !m_lo {
+        // Dx <-> Dy
+        let dx_val = cpu.reg.read_data(xx);
+        let dy_val = cpu.reg.read_data(xy);
+        cpu.reg.write_data(xx, DataSize::Long, dy_val);
+        cpu.reg.write_data(xy, DataSize::Long, dx_val);
+    } else if m_hi == 0b01 {
+        // Ax <-> Ay
+        let ax_val = cpu.reg.read_address(xx);
+        let ay_val = cpu.reg.read_address(xy);
+        cpu.reg.write_address(xx, DataSize::Long, ay_val);
+        cpu.reg.write_address(xy, DataSize::Long, ax_val);
+    } else {
+        // Dx <-> Ay
+        let dx_val = cpu.reg.read_data(xx);
+        let ay_val = cpu.reg.read_address(xy);
+        cpu.reg.write_data(xx, DataSize::Long, ay_val);
+        cpu.reg.write_address(xy, DataSize::Long, dx_val);
+    }
 }

@@ -245,8 +245,15 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
                 MULU { op }
             } else if d && s == 0b11 {
                 MULS { op }
-            } else if d && m & 0b110 == 0b000 {
-                EXG { op }
+            } else if d
+                   && m & 0b110 == 0b000
+                   && 0b00 < s
+                   && s < 0b11 {
+                if !((s == 0b10) && (m & 1 == 0)) {
+                    EXG { op }
+                } else {
+                    Undefined { op }
+                }
             } else {
                 AND { op }
             }
