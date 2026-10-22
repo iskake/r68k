@@ -110,6 +110,8 @@ macro_rules! op_and { ($a:expr, $b:expr) => { $a & $b }; }
 macro_rules! op_eor { ($a:expr, $b:expr) => { $a ^ $b }; }
 macro_rules! op_neg { ($a:expr, $b:expr) => {  0 - $a - $b }; }
 macro_rules! op_not { ($a:expr) => { !$a }; }
+macro_rules! op_clr { ($a:expr) => { 0x00 }; }
+macro_rules! op_set { ($a:expr) => { 0xff }; }
 
 macro_rules! define_modify_am_op {
     ($fn_name: ident, $op: ident) => {
@@ -701,6 +703,9 @@ impl CPU {
     define_modify_am_op!(modify_am_clr, clear_bit);
     define_modify_am_op!(modify_am_chg, change_bit);
 
+    define_modify_am_op!(modify_am_set_all, op_set, single);
+    define_modify_am_op!(modify_am_clr_all, op_clr, single);
+
     /// Push an element on top of the stack.
     /// Decreases the user stack pointer (a7) by 2.
     /// 
@@ -819,7 +824,7 @@ impl CPU {
         let post_cycles = self.cycles;
         let post_cycles_read = self.read_cycles;
         let post_cycles_write= self.write_cycles;
-        println!();
+        // println!();
         println!(
             "{}({}/{})",
             post_cycles - pre_cycles,

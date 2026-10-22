@@ -445,7 +445,7 @@ impl Display for Instruction {
             NEG   { op } => write!(f, "neg{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
             NEGX  { op } => write!(f, "negx{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
             NOT   { op } => write!(f, "not{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
-            CLR   { op } => todo!(),
+            CLR   { op } => write!(f, "clr{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
             EXT   { op } => write!(f, "ext{} d{}", get_op_size_bit6(*op), get_op_xn_lo(*op)),
             NBCD  { op } => todo!(),
             SWAP  { op } => write!(f, "swap.w d{}", get_op_xn_lo(*op)),
@@ -543,7 +543,12 @@ impl Display for Instruction {
                 write!(f, "suba{} {},a{}", s, am, an)
             },
 
-            Scc   { op } => todo!(),
+            Scc   { op } => {
+                let cc: Condition = ((op & 0x0f00) >> 8).into();
+                let am = AddressingMode::decode_op(*op);
+
+                write!(f, "s{} {}", cc, am)
+            },
             DBcc  { op } => {
                 let cc: Condition = ((op & 0x0f00) >> 8).into();
                 let dn = get_op_xn_lo(*op);
@@ -705,8 +710,8 @@ impl Instruction {
             Instruction::SWAP  { op } => swap(op, cpu),
             Instruction::EXG   { op } => exg(op, cpu),
             // clear/set
-            Instruction::CLR   { op } => todo!(),
-            Instruction::Scc   { op } => todo!(),
+            Instruction::CLR   { op } => clr(op, cpu),
+            Instruction::Scc   { op } => scc(op, cpu),
             // other
             Instruction::NOP   => {},   // TODO: "does not begin execution until all pending bus cycles have completed."
             Instruction::Undefined { op } => trap_illegal(op, cpu),
@@ -1761,5 +1766,61 @@ fn exg(op: u16, cpu: &mut CPU) {
         let ay_val = cpu.reg.read_address(xy);
         cpu.reg.write_data(xx, DataSize::Long, ay_val);
         cpu.reg.write_address(xy, DataSize::Long, dx_val);
+    }
+}
+
+fn clr(op: u16, cpu: &mut CPU) {
+    let s = get_op_size(op);
+    let am = AddressingMode::decode_op(op);
+    assert_valid_am(am, 0b1011111_11000);
+
+    match am {
+        AddressingMode::DataReg(_) => if s == DataSize::Long { cpu.cycle(2) },      // +0(0/0) | +2(0/0)
+        _ => if s == DataSize::Long { cpu.cycle(8) } else { cpu.cycle(4) }, // +8(0/0) (?: should be write(s)?)
+    }
+
+    if cpu.revision == MC68000 {
+        // "In the MC68000 and MC68008 a memory location is read before it is cleared."
+        cpu.modify_am_clr_all(s, am);
+    } else {
+        cpu.write_am(s, am, 0);
+    }
+
+    cpu.reg.sr.clear_n();
+    cpu.reg.sr.set_z();
+    cpu.reg.sr.clear_v();
+    cpu.reg.sr.clear_c();
+}
+
+fn scc(op: u16, cpu: &mut CPU) {
+    let am = AddressingMode::decode_op(op);
+    let condition = Condition::from((op & 0xf00) >> 8);
+    assert_valid_am(am, 0b1011111_11000);
+
+    match am {
+        AddressingMode::DataReg(_) => {},
+        _ => cpu.cycle(4),  // +4(0/0)
+    }
+    if condition.is_true(cpu) {
+        // cc true
+
+        if let AddressingMode::DataReg(_) = am {
+            cpu.cycle(2);   // +2(0/0)
+        }
+
+        if cpu.revision == MC68000 {
+            // "In the MC68000 and MC68008 a memory destination is read before it is written."
+            cpu.modify_am_set_all(DataSize::Byte, am);
+        } else {
+            cpu.write_am(DataSize::Byte, am, 0xff);
+        }
+    } else {
+        // cc false
+        if cpu.revision == MC68000 {
+            // "In the MC68000 and MC68008 a memory destination is read before it is written."
+            cpu.modify_am_clr_all(DataSize::Byte, am);
+        } else {
+            cpu.write_am(DataSize::Byte, am, 0);
+        }
     }
 }
