@@ -567,7 +567,7 @@ impl CPU {
                 // TODO: other indexed addressing modes
                 let pc_val = self.reg.pc;
 
-                let (x, xn, s, _, d) = self.read_extension_brief();
+                let (x, xn, s, _, d) = self.read_extension_brief(); // +4(1/0)
                 let displacement = d.sign_extend();
 
                 let x_reg_val = if x {
@@ -831,7 +831,7 @@ impl CPU {
             post_cycles_read - pre_cycles_read,
             post_cycles_write - pre_cycles_write
         );
-        self.print_state();
+        // self.print_state();
 
         true
     }

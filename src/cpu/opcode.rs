@@ -35,11 +35,14 @@ pub(crate) fn get_op_size_bit8(op: u16) -> DataSize {
     (((op & 0b100_000_000) >> 8) as u8 + 1).into()
 }
 
-pub(crate) fn get_op_size_move(op: u16) -> DataSize {
+pub(crate) const SIZE_SHIFT_CHK:  u8 = 7;
+pub(crate) const SIZE_SHIFT_MOVE: u8 = 12;
+
+pub(crate) fn get_op_size_alt(op: u16, shift: u8) -> DataSize {
     // 01 -> 00 (.b)
     // 11 -> 01 (.w)
     // 10 -> 10 (.l)
-    let s = ((op & 0b11_000_000_000_000) >> 12) as u8;
+    let s = ((op & (0b11 << shift)) >> shift) as u8;
 
     let sh = (s & 0b10) >> 1;
     let sl = s & 0b01;
@@ -299,10 +302,15 @@ fn decode_opcode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u
         if m_hi & 0b001 == 1 {
             return LEA { op }
         } else {
-            // NOTE: s is always 0b11 (.w) on mc68000
-            // TODO: other chk sizes (mc680x0 where x=20,30,40)
+            // s is always 0b11 (.w) on mc68000
             return CHK { op }
         }
+    } else if m_hi & 0b110 == 0b100 {
+        // TODO: revision checking in decode fn
+
+        // MC680x0, for x=2|3|4 only
+        // CHK { op }
+        return Undefined { op }
     }
 
     let op_hi_bit3 = (op & 0x800) >> 8;

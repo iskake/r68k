@@ -340,49 +340,6 @@ impl Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use Instruction::*;
         match self {
-            ORIToCCR  => write!(f, "ori.b #imm,ccr"),
-            ORIToSR   => write!(f, "ori.w #imm,sr"),
-            ANDIToCCR => write!(f, "andi.b #imm,ccr"),
-            ANDIToSR  => write!(f, "andi.w #imm,sr"),
-            EORIToCCR => write!(f, "eori.b #imm,ccr"),
-            EORIToSR  => write!(f, "eori.w #imm,sr"),
-
-            ORI   { op } => write!(f, "ori{} #imm,{}", get_op_size(*op), AddressingMode::decode_op(*op)),
-            ANDI  { op } => write!(f, "andi{} #imm,{}", get_op_size(*op), AddressingMode::decode_op(*op)),
-            EORI  { op } => write!(f, "eori{} #imm,{}", get_op_size(*op), AddressingMode::decode_op(*op)),
-            OR    { op } => display_a_op_b!(f, "or", op),
-            EOR   { op } => display_a_op_b!(f, "eor", op),
-            AND   { op } => display_a_op_b!(f, "and", op),
-
-            CMPI  { op } => {
-                let s = get_op_size(*op);
-                let am = AddressingMode::decode_op(*op);
-                write!(f, "cmpi{} #imm,{}", s, am)
-            },
-            CMPM  { op } => {
-                let s = get_op_size(*op);
-                let ay = get_op_xn_lo(*op);
-                let ax = get_op_xn_hi(*op);
-                write!(f, "cmpm{} (a{})+,(a{})+", s, ay, ax)
-            },
-            CMP   { op } => {
-                let s = get_op_size(*op);
-                let am = AddressingMode::decode_op(*op);
-                let dn = get_op_xn_hi(*op);
-                write!(f, "cmp{} {},d{}", s, am, dn)
-            },
-            CMPA  { op } => {
-                let s = get_op_size_bit8(*op);
-                let am = AddressingMode::decode_op(*op);
-                let an = get_op_xn_hi(*op);
-                write!(f, "cmpa{} {},a{}", s, am, an)
-            },
-
-            BTST  { op } => display_bop!(f, "btst", op),
-            BCHG  { op } => display_bop!(f, "bchg", op),
-            BCLR  { op } => display_bop!(f, "bclr", op),
-            BSET  { op } => display_bop!(f, "bset", op),
-
             // moves
             MOVEP { op } => {
                 let s = get_op_size_bit6(*op);
@@ -397,7 +354,7 @@ impl Display for Instruction {
                 }
             },
             MOVEA { op } => {
-                let s = get_op_size_move(*op);
+                let s = get_op_size_alt(*op, SIZE_SHIFT_MOVE);
 
                 let am_src = AddressingMode::decode_op(*op);
 
@@ -406,7 +363,7 @@ impl Display for Instruction {
                 write!(f, "movea{} {},a{}", s, am_src, xn)
             },
             MOVE  { op } => {
-                let s = get_op_size_move(*op);
+                let s = get_op_size_alt(*op, SIZE_SHIFT_MOVE);
 
                 let am_src = AddressingMode::decode_op(*op);
 
@@ -441,41 +398,7 @@ impl Display for Instruction {
                     write!(f, "move.l usp,a{}", an)
                 }
             },
-
-            NEG   { op } => write!(f, "neg{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
-            NEGX  { op } => write!(f, "negx{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
-            NOT   { op } => write!(f, "not{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
-            CLR   { op } => write!(f, "clr{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
-            EXT   { op } => write!(f, "ext{} d{}", get_op_size_bit6(*op), get_op_xn_lo(*op)),
-            NBCD  { op } => todo!(),
-            SWAP  { op } => write!(f, "swap.w d{}", get_op_xn_lo(*op)),
-            PEA   { op } => write!(f, "pea {}", AddressingMode::decode_op(*op)),
-            ILLEGAL {op} => write!(f, "illegal"),
-            TAS   { op } => todo!(),
-            TST   { op } => todo!(),
-            TRAP  { op } => write!(f, "trap #{}", op & 0xf),
-            LINK  { op } => {
-                let an = get_op_xn_lo(*op);
-                let size = if op & 0b0000011001010000 != 0 {
-                    DataSize::Word
-                } else {
-                    DataSize::Long
-                };
-                write!(f, "link{} a{},#imm", size, an)
-            },
-            UNLK  { op } => write!(f, "unlk a{}", get_op_xn_lo(*op)),
-            RESET              => write!(f, "reset"),
-            NOP                => write!(f, "nop"),
-            STOP               => write!(f, "stop #imm"),
-            RTE                => write!(f, "rte"),
-            RTS                => write!(f, "rts"),
-            TRAPV              => write!(f, "trapv"),
-            RTR                => write!(f, "rtr"),
-            JSR   { op } => write!(f, "jsr {}", AddressingMode::decode_op(*op)),
-            JMP   { op } => write!(f, "jmp {}", AddressingMode::decode_op(*op)),
-            LEA   { op } => write!(f, "lea {}", AddressingMode::decode_op(*op)),
-            CHK   { op } => todo!(),
-
+            // arithmetic
             ADDI  { op } => {
                 let am = AddressingMode::decode_op(*op);
                 let s = get_op_size(*op);
@@ -542,13 +465,26 @@ impl Display for Instruction {
                 let an = get_op_xn_hi(*op);
                 write!(f, "suba{} {},a{}", s, am, an)
             },
-
-            Scc   { op } => {
-                let cc: Condition = ((op & 0x0f00) >> 8).into();
+            DIVU  { op } => todo!(),
+            DIVS  { op } => todo!(),
+            MULU  { op } => todo!(),
+            MULS  { op } => todo!(),
+            // exceptions, etc.
+            TRAP  { op } => write!(f, "trap #{}", op & 0xf),
+            TRAPV              => write!(f, "trapv"),
+            ILLEGAL {op} => write!(f, "illegal"),
+            CHK   { op } => {
+                let s = get_op_size_alt(*op, SIZE_SHIFT_CHK);
                 let am = AddressingMode::decode_op(*op);
-
-                write!(f, "s{} {}", cc, am)
+                let dn = get_op_xn_hi(*op);
+                write!(f, "chk{} {},d{}", s, am, dn)
             },
+            RESET              => write!(f, "reset"),
+            STOP               => write!(f, "stop #imm"),
+            // jumps
+            JSR   { op } => write!(f, "jsr {}", AddressingMode::decode_op(*op)),
+            JMP   { op } => write!(f, "jmp {}", AddressingMode::decode_op(*op)),
+            // branch
             DBcc  { op } => {
                 let cc: Condition = ((op & 0x0f00) >> 8).into();
                 let dn = get_op_xn_lo(*op);
@@ -583,12 +519,83 @@ impl Display for Instruction {
                 let cc: Condition = ((op & 0x0f00) >> 8).into();
                 write!(f, "b{}{} displace", cc, s)
             },
-            DIVU  { op } => todo!(),
-            DIVS  { op } => todo!(),
-            SBCD  { op } => todo!(),
-            MULU  { op } => todo!(),
-            MULS  { op } => todo!(),
+            // returns
+            RTE                => write!(f, "rte"),
+            RTS                => write!(f, "rts"),
+            RTR                => write!(f, "rtr"),
+            // link
+            LINK  { op } => {
+                let an = get_op_xn_lo(*op);
+                let size = if op & 0b0000011001010000 != 0 {
+                    DataSize::Word
+                } else {
+                    DataSize::Long
+                };
+                write!(f, "link{} a{},#imm", size, an)
+            },
+            UNLK  { op } => write!(f, "unlk a{}", get_op_xn_lo(*op)),
+            // <ea>
+            LEA   { op } => write!(f, "lea {}", AddressingMode::decode_op(*op)),
+            PEA   { op } => write!(f, "pea {}", AddressingMode::decode_op(*op)),
+            // logical
+            ORI   { op } => write!(f, "ori{} #imm,{}", get_op_size(*op), AddressingMode::decode_op(*op)),
+            ANDI  { op } => write!(f, "andi{} #imm,{}", get_op_size(*op), AddressingMode::decode_op(*op)),
+            EORI  { op } => write!(f, "eori{} #imm,{}", get_op_size(*op), AddressingMode::decode_op(*op)),
+            OR    { op } => display_a_op_b!(f, "or", op),
+            AND   { op } => display_a_op_b!(f, "and", op),
+            EOR   { op } => display_a_op_b!(f, "eor", op),
+            ORIToCCR  => write!(f, "ori.b #imm,ccr"),
+            ORIToSR   => write!(f, "ori.w #imm,sr"),
+            ANDIToCCR => write!(f, "andi.b #imm,ccr"),
+            ANDIToSR  => write!(f, "andi.w #imm,sr"),
+            EORIToCCR => write!(f, "eori.b #imm,ccr"),
+            EORIToSR  => write!(f, "eori.w #imm,sr"),
+            CMP   { op } => {
+                let s = get_op_size(*op);
+                let am = AddressingMode::decode_op(*op);
+                let dn = get_op_xn_hi(*op);
+                write!(f, "cmp{} {},d{}", s, am, dn)
+            },
+            CMPI  { op } => {
+                let s = get_op_size(*op);
+                let am = AddressingMode::decode_op(*op);
+                write!(f, "cmpi{} #imm,{}", s, am)
+            },
+            CMPA  { op } => {
+                let s = get_op_size_bit8(*op);
+                let am = AddressingMode::decode_op(*op);
+                let an = get_op_xn_hi(*op);
+                write!(f, "cmpa{} {},a{}", s, am, an)
+            },
+            CMPM  { op } => {
+                let s = get_op_size(*op);
+                let ay = get_op_xn_lo(*op);
+                let ax = get_op_xn_hi(*op);
+                write!(f, "cmpm{} (a{})+,(a{})+", s, ay, ax)
+            },
+            // logical (single)
+            NEGX  { op } => write!(f, "negx{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
+            NEG   { op } => write!(f, "neg{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
+            NOT   { op } => write!(f, "not{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
+            // bit
+            BTST  { op } => display_bop!(f, "btst", op),
+            BCHG  { op } => display_bop!(f, "bchg", op),
+            BCLR  { op } => display_bop!(f, "bclr", op),
+            BSET  { op } => display_bop!(f, "bset", op),
+            TAS   { op } => todo!(),
+            TST   { op } => todo!(),
+            // shift/rotate
+            ASd   { op } => todo!(),
+            LSd   { op } => todo!(),
+            ROXd  { op } => todo!(),
+            ROd   { op } => todo!(),
+            // bcd
             ABCD  { op } => todo!(),
+            SBCD  { op } => todo!(),
+            NBCD  { op } => todo!(),
+            // register modification
+            EXT   { op } => write!(f, "ext{} d{}", get_op_size_bit6(*op), get_op_xn_lo(*op)),
+            SWAP  { op } => write!(f, "swap.w d{}", get_op_xn_lo(*op)),
             EXG   { op } => {
                 let xy = get_op_xn_lo(*op);
                 let xx = get_op_xn_hi(*op);
@@ -606,11 +613,17 @@ impl Display for Instruction {
                     write!(f, "exg d{},a{}", xx, xy)
                 }
             },
-            ASd   { op } => todo!(),
-            LSd   { op } => todo!(),
-            ROXd  { op } => todo!(),
-            ROd   { op } => todo!(),
-            Undefined { op } => write!(f, "undefined 0x{op:04x}"),
+            // clear/set
+            CLR   { op } => write!(f, "clr{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
+            Scc   { op } => {
+                let cc: Condition = ((op & 0x0f00) >> 8).into();
+                let am = AddressingMode::decode_op(*op);
+
+                write!(f, "s{} {}", cc, am)
+            },
+            // other
+            NOP                => write!(f, "nop"),
+            Undefined{op}=> write!(f, "undefined 0x{op:04x}"),
         }
     }
 }
@@ -622,12 +635,12 @@ impl Instruction {
             Instruction::MOVEP { op } => movep(op, cpu),
             Instruction::MOVEA { op } => movea(op, cpu),
             Instruction::MOVE  { op } => move_(op, cpu),
-            Instruction::MOVEFromSR { op } => move_from_sr(op, cpu),
-            Instruction::MOVEToCCR  { op } => move_to_ccr(op, cpu),
-            Instruction::MOVEToSR   { op } => move_to_sr(op, cpu),
             Instruction::MOVEQ { op } => moveq(op, cpu),
             Instruction::MOVEM { op } => movem(op, cpu),
-            Instruction::MOVEUSP { op } => move_usp(op, cpu),
+            Instruction::MOVEUSP {op} => move_usp(op, cpu),
+            Instruction::MOVEFromSR {op} => move_from_sr(op, cpu),
+            Instruction::MOVEToCCR  {op} => move_to_ccr(op, cpu),
+            Instruction::MOVEToSR   {op} => move_to_sr(op, cpu),
             // arithmetic
             Instruction::ADDI  { op } => addi(op, cpu),
             Instruction::ADD   { op } => add(op, cpu),
@@ -647,7 +660,7 @@ impl Instruction {
             Instruction::TRAP  { op } => trap(op, cpu),
             Instruction::TRAPV             => trapv(cpu),
             Instruction::ILLEGAL {op} => trap_illegal(op, cpu),
-            Instruction::CHK   { op } => todo!(),
+            Instruction::CHK   { op } => chk(op, cpu),
             Instruction::RESET             => reset(cpu),
             Instruction::STOP              => stop(cpu),
             // jumps
@@ -713,8 +726,8 @@ impl Instruction {
             Instruction::CLR   { op } => clr(op, cpu),
             Instruction::Scc   { op } => scc(op, cpu),
             // other
-            Instruction::NOP   => {},   // TODO: "does not begin execution until all pending bus cycles have completed."
-            Instruction::Undefined { op } => trap_illegal(op, cpu),
+            Instruction::NOP               => {},   // TODO: "does not begin execution until all pending bus cycles have completed."
+            Instruction::Undefined{op}=> trap_illegal(op, cpu),
         }
     }
 }
@@ -743,7 +756,7 @@ fn assert_valid_am(am: AddressingMode, mask: u32) {
 }
 
 fn move_(op: u16, cpu: &mut CPU) {
-    let s = get_op_size_move(op);
+    let s = get_op_size_alt(op, SIZE_SHIFT_MOVE);
     let am_src = AddressingMode::decode_op(op);
     // Every addressing mode can be used as the source, so no need to assert validity
 
@@ -762,7 +775,7 @@ fn move_(op: u16, cpu: &mut CPU) {
 }
 
 fn movea(op: u16, cpu: &mut CPU) {
-    let s = get_op_size_move(op);
+    let s = get_op_size_alt(op, SIZE_SHIFT_MOVE);
     let am_src = AddressingMode::decode_op(op);
     // Same as move; no need to assert validity of source
 
@@ -1471,6 +1484,37 @@ fn trap(op: u16, cpu: &mut CPU) {
 fn trap_illegal(op: u16, cpu: &mut CPU) {
     println!("illegal instruction (0b{op:016b}; 0x{op:04x})");
     trap_vec(CPUVector::IllegalInstruction as u8, cpu);
+}
+
+fn chk(op: u16, cpu: &mut CPU) {
+    let s = get_op_size_alt(op, SIZE_SHIFT_CHK);
+    let am = AddressingMode::decode_op(op);
+    assert_valid_am(am, 0b1011111_11111);
+    let dn = get_op_xn_hi(op).into();
+
+    cpu.cycle(6);       // +6(0/0)
+    let dn_val = cpu.reg.read_data(dn);
+    let src_val = cpu.read_am(s, am);
+
+    let lt_cond = dn_val & s.sign_bit() != 0;
+    let gt_cond = dn_val & s.mask() > src_val;
+
+    if lt_cond || gt_cond {
+        // ?
+        cpu.read_pc_short();   // +4(1/0)
+
+        //? N is "Set if Dn < 0; cleared if Dn > effective address operand; undefined otherwise."
+        if lt_cond {
+            cpu.reg.sr.clear_n();
+        } else if gt_cond {
+            cpu.reg.sr.clear_n();
+        }
+
+        trap_vec(CPUVector::ChkInstruction as u8, cpu);
+    }
+
+    //? Note: the rest of the condition codes are "undefined" (except x, which is "not affected")
+    //? ...should this be handled in a specific way?
 }
 
 fn stop(cpu: &mut CPU) {
