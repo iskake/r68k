@@ -453,7 +453,7 @@ impl Display for Instruction {
             ILLEGAL {op} => write!(f, "illegal"),
             TAS   { op } => todo!(),
             TST   { op } => todo!(),
-            TRAP  { op } => todo!(),
+            TRAP  { op } => write!(f, "trap #{}", op & 0xf),
             LINK  { op } => {
                 let an = get_op_xn_lo(*op);
                 let size = if op & 0b0000011001010000 != 0 {
