@@ -114,8 +114,95 @@ macro_rules! op_clr { ($a:expr) => { 0x00 }; }
 macro_rules! op_set { ($a:expr) => { 0xff }; }
 macro_rules! op_tas { ($a:expr) => { $a | 0x80 }; }
 
+// TODO: check if all these produce the same results as real hardware
+macro_rules! op_abcd {
+    ($a:expr, $b:expr, $x:expr) => {
+        {
+            // let mut res = (($a) & 0xff) + (($b) & 0xff) + $x as u32;
+            let a = $a & 0xff;
+            let b = $b & 0xff;
+            let x = $x as u32;
+
+            let mut res = a + b + x;
+
+            if (a & 0xf) + (b & 0xf) + x > 0x9 {
+                res += 0x6;
+            }
+
+            let carry = if res > 0x99 {
+                res += 0x60;
+                true
+            } else {
+                false
+            };
+
+            (carry, res)
+        }
+    };
+}
+macro_rules! op_sbcd {
+    ($a:expr, $b:expr, $x:expr) => {
+        {
+            let a = $a as i32 & 0xff;
+            let b = $b as i32 & 0xff;
+            let x = $x as i32;
+
+            let mut res = a - b - x;
+
+            if (a & 0xf) - (b & 0xf) - x < 0 {
+                res -= 0x6;
+            }
+
+            let borrow = if res < 0 {
+                res -= 0x60;
+                true
+            } else {
+                false
+            };
+
+            (borrow, res as u32)
+        }
+    };
+}
+macro_rules! op_nbcd {
+    ($a:expr, $_:expr, $x:expr) => { op_sbcd!(0, $a, $x) };
+}
+
 macro_rules! define_modify_am_op {
-    ($fn_name: ident, $op: ident) => {
+    ($fn_name: ident, $op: ident, unary) => {
+        pub fn $fn_name(&mut self, size: DataSize, am: AddressingMode) -> (u32, u32) {
+            let addr = self.calculate_am_operand(size, am);
+
+            match am {
+                // 0(0/0)
+                AddressingMode::DataReg(dn) => {
+                    let previous = self.reg.read_data(dn);
+                    let result = $op!(previous);
+                    self.reg.write_data(dn, size, result);
+                    (previous, result)
+                },
+                // 0(0/0)
+                AddressingMode::AddrReg(an) => {
+                    let previous = self.reg.read_address(an);
+                    let result = $op!(previous);
+                    self.reg.write_address(an, size, result);
+                    (previous, result)
+                },
+                // x(n/a)
+                AddressingMode::Imm => panic!("Cannot write to immediate"),
+                AddressingMode::Invalid => panic!("Cannot write with invalid addressing mode"),
+                // 4(0/1) | 8(0/2)
+                _ => {
+                    let previous = self.read_mem_size_internal(size, addr);
+                    let result = $op!(previous);
+                    self.write_mem_size(size, addr, result);
+                    (previous, result)
+                }
+            }
+        }
+    };
+
+    ($fn_name: ident, $op: ident, binary) => {
         pub fn $fn_name(&mut self, size: DataSize, am: AddressingMode, val: u32) -> (u32, u32) {
             let addr = self.calculate_am_operand(size, am);
 
@@ -148,24 +235,25 @@ macro_rules! define_modify_am_op {
         }
     };
 
-    ($fn_name: ident, $op: ident, single) => {
-        pub fn $fn_name(&mut self, size: DataSize, am: AddressingMode) -> (u32, u32) {
+
+    ($fn_name: ident, $op: ident, ternary) => {
+        pub fn $fn_name(&mut self, size: DataSize, am: AddressingMode, val: u32, x: bool) -> (bool, u32) {
             let addr = self.calculate_am_operand(size, am);
 
             match am {
                 // 0(0/0)
                 AddressingMode::DataReg(dn) => {
                     let previous = self.reg.read_data(dn);
-                    let result = $op!(previous);
+                    let (carry, result) = $op!(previous, val, x);
                     self.reg.write_data(dn, size, result);
-                    (previous, result)
+                    (carry, result)
                 },
                 // 0(0/0)
                 AddressingMode::AddrReg(an) => {
                     let previous = self.reg.read_address(an);
-                    let result = $op!(previous);
+                    let (carry, result) = $op!(previous, val, x);
                     self.reg.write_address(an, size, result);
-                    (previous, result)
+                    (carry, result)
                 },
                 // x(n/a)
                 AddressingMode::Imm => panic!("Cannot write to immediate"),
@@ -173,9 +261,9 @@ macro_rules! define_modify_am_op {
                 // 4(0/1) | 8(0/2)
                 _ => {
                     let previous = self.read_mem_size_internal(size, addr);
-                    let result = $op!(previous);
+                    let (carry, result) = $op!(previous, val, x);
                     self.write_mem_size(size, addr, result);
-                    (previous, result)
+                    (carry, result)
                 }
             }
         }
@@ -691,23 +779,27 @@ impl CPU {
         }
     }
 
-    define_modify_am_op!(modify_am_add, op_add);
-    define_modify_am_op!(modify_am_sub, op_sub);
-    define_modify_am_op!(modify_am_or,  op_or);
-    define_modify_am_op!(modify_am_and, op_and);
-    define_modify_am_op!(modify_am_eor, op_eor);
+    define_modify_am_op!(modify_am_add, op_add, binary);
+    define_modify_am_op!(modify_am_sub, op_sub, binary);
+    define_modify_am_op!(modify_am_or,  op_or,  binary);
+    define_modify_am_op!(modify_am_and, op_and, binary);
+    define_modify_am_op!(modify_am_eor, op_eor, binary);
 
-    define_modify_am_op!(modify_am_neg, op_neg);
-    define_modify_am_op!(modify_am_not, op_not, single);
+    define_modify_am_op!(modify_am_neg, op_neg, binary);
+    define_modify_am_op!(modify_am_not, op_not, unary);
 
-    define_modify_am_op!(modify_am_set, set_bit);
-    define_modify_am_op!(modify_am_clr, clear_bit);
-    define_modify_am_op!(modify_am_chg, change_bit);
+    define_modify_am_op!(modify_am_set, set_bit,    binary);
+    define_modify_am_op!(modify_am_clr, clear_bit,  binary);
+    define_modify_am_op!(modify_am_chg, change_bit, binary);
 
-    define_modify_am_op!(modify_am_tas, op_tas, single);
+    define_modify_am_op!(modify_am_tas, op_tas, unary);
 
-    define_modify_am_op!(modify_am_set_all, op_set, single);
-    define_modify_am_op!(modify_am_clr_all, op_clr, single);
+    define_modify_am_op!(modify_am_set_all, op_set, unary);
+    define_modify_am_op!(modify_am_clr_all, op_clr, unary);
+
+    define_modify_am_op!(modify_am_abcd, op_abcd, ternary);
+    define_modify_am_op!(modify_am_sbcd, op_sbcd, ternary);
+    define_modify_am_op!(modify_am_nbcd, op_nbcd, ternary);
 
     /// Push an element on top of the stack.
     /// Decreases the user stack pointer (a7) by 2.
@@ -810,7 +902,7 @@ impl CPU {
     fn fetch_and_run(&mut self) {
         let op = self.read_pc_inc_short();
         let inst = opcode::decode_opcode(op);
-        print!("{:<22}", format!("{inst}"));
+        print!("{op:04x}    {:<22}", format!("{inst}"));
         inst.run(self);
     }
 

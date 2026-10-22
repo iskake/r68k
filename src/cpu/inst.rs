@@ -585,14 +585,34 @@ impl Display for Instruction {
             TAS   { op } => write!(f, "tas {}", AddressingMode::decode_op(*op)),
             TST   { op } => write!(f, "tst{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
             // shift/rotate
-            ASd   { op } => todo!(),
-            LSd   { op } => todo!(),
-            ROXd  { op } => todo!(),
-            ROd   { op } => todo!(),
+            ASd   { op } => write!(f, "asd TMP"),
+            LSd   { op } => write!(f, "lsd TMP"),
+            ROXd  { op } => write!(f, "roxd TMP"),
+            ROd   { op } => write!(f, "rod TMP"),
             // bcd
-            ABCD  { op } => todo!(),
-            SBCD  { op } => todo!(),
-            NBCD  { op } => todo!(),
+            ABCD  { op } => {
+                let xx = get_op_xn_hi(*op);
+                let xy = get_op_xn_lo(*op);
+                let m = op & 0b1000 == 0;
+
+                if m {
+                    write!(f, "abcd d{},d{}", xy, xx)
+                } else {
+                    write!(f, "abcd -(a{}),-(a{})", xy, xx)
+                }
+            },
+            SBCD  { op } => {
+                let xx = get_op_xn_hi(*op);
+                let xy = get_op_xn_lo(*op);
+                let m = op & 0b1000 == 0;
+
+                if m {
+                    write!(f, "sbcd d{},d{}", xy, xx)
+                } else {
+                    write!(f, "sbcd -(a{}),-(a{})", xy, xx)
+                }
+            },
+            NBCD  { op } => write!(f, "nbcd {}", AddressingMode::decode_op(*op)),
             // register modification
             EXT   { op } => write!(f, "ext{} d{}", get_op_size_bit6(*op), get_op_xn_lo(*op)),
             SWAP  { op } => write!(f, "swap.w d{}", get_op_xn_lo(*op)),
@@ -715,9 +735,9 @@ impl Instruction {
             Instruction::ROXd  { op } => todo!(),
             Instruction::ROd   { op } => todo!(),
             // bcd
-            Instruction::ABCD  { op } => todo!(),
-            Instruction::SBCD  { op } => todo!(),
-            Instruction::NBCD  { op } => todo!(),
+            Instruction::ABCD  { op } => abcd(op, cpu),
+            Instruction::SBCD  { op } => sbcd(op, cpu),
+            Instruction::NBCD  { op } => nbcd(op, cpu),
             // register modification
             Instruction::EXT   { op } => ext(op, cpu),
             Instruction::SWAP  { op } => swap(op, cpu),
@@ -1448,6 +1468,68 @@ fn tst(op: u16, cpu: &mut CPU) {
     cpu.reg.sr.modify_z(is_zero(val, s));
     cpu.reg.sr.clear_v();
     cpu.reg.sr.clear_c();
+}
+
+macro_rules! define_xbcd {
+    ($abcd:ident, $modify_am_abcd:ident) => {
+        fn $abcd(op: u16, cpu: &mut CPU) {
+            let xx = get_op_xn_hi(op).into();
+            let xy = get_op_xn_lo(op).into();
+            let m = op & 0b1000 == 0;
+            let s = DataSize::Byte;
+
+            cpu.cycle(2);   // +2(0/0)
+
+            let x = cpu.reg.sr.x();
+
+            let (carry, res) = if m {
+                // Dy,Dx
+                let dy_val = cpu.reg.read_data(xy);
+
+                // Dy ' Dx -> Dx
+                cpu.$modify_am_abcd(s, AddressingMode::DataReg(xx), dy_val, x)
+            } else {
+                // -(Ay),-(Ax)
+                let ay_val = cpu.read_am(s, AddressingMode::AddrPreDec(xy));        // +6(1/0)
+
+                // -(An) ' -(An) -> -(An)
+                cpu.$modify_am_abcd(s, AddressingMode::AddrPreDec(xx), ay_val, x)   // + 6(1/0)
+            };
+
+            cpu.reg.sr.modify_x(carry);
+            // n is undefined
+            if res != 0 {
+                cpu.reg.sr.clear_z();
+            }
+            // v is undefined
+            cpu.reg.sr.modify_c(carry);
+        }
+
+    };
+}
+
+define_xbcd!(abcd, modify_am_abcd);
+define_xbcd!(sbcd, modify_am_sbcd);
+
+fn nbcd(op: u16, cpu: &mut CPU) {
+    let am = AddressingMode::decode_op(op);
+    let s = DataSize::Byte;
+
+    match am {
+        AddressingMode::DataReg(_) => cpu.cycle(2), // +2(0/0)
+        _ => cpu.cycle(4),                          // +4(0/0)
+    }
+
+    let x = cpu.reg.sr.x();
+    let (borrow, res) = cpu.modify_am_nbcd(s, am, 0, x);
+
+    cpu.reg.sr.modify_x(borrow);
+    // n is undefined
+    if res != 0 {
+        cpu.reg.sr.clear_z();
+    }
+    // v is undefined
+    cpu.reg.sr.modify_c(borrow);
 }
 
 fn lea(op: u16, cpu: &mut CPU) {
