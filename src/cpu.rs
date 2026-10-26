@@ -237,21 +237,21 @@ macro_rules! define_modify_am_op {
 
 
     ($fn_name: ident, $op: ident, ternary) => {
-        pub fn $fn_name(&mut self, size: DataSize, am: AddressingMode, val: u32, x: bool) -> (bool, u32) {
+        pub fn $fn_name(&mut self, size: DataSize, am: AddressingMode, _val: u32, x: bool) -> (bool, u32) {
             let addr = self.calculate_am_operand(size, am);
 
             match am {
                 // 0(0/0)
                 AddressingMode::DataReg(dn) => {
                     let previous = self.reg.read_data(dn);
-                    let (carry, result) = $op!(previous, val, x);
+                    let (carry, result) = $op!(previous, _val, x);
                     self.reg.write_data(dn, size, result);
                     (carry, result)
                 },
                 // 0(0/0)
                 AddressingMode::AddrReg(an) => {
                     let previous = self.reg.read_address(an);
-                    let (carry, result) = $op!(previous, val, x);
+                    let (carry, result) = $op!(previous, _val, x);
                     self.reg.write_address(an, size, result);
                     (carry, result)
                 },
@@ -261,7 +261,7 @@ macro_rules! define_modify_am_op {
                 // 4(0/1) | 8(0/2)
                 _ => {
                     let previous = self.read_mem_size_internal(size, addr);
-                    let (carry, result) = $op!(previous, val, x);
+                    let (carry, result) = $op!(previous, _val, x);
                     self.write_mem_size(size, addr, result);
                     (carry, result)
                 }
@@ -274,11 +274,15 @@ impl CPU {
     pub fn new(rev: CPURevision) -> CPU {
         let (data_bus_mask, addr_bus_mask) = match rev {
             CPURevision::MC68000 => { (0x0000_ffff, 0x00ff_ffff) },
-            CPURevision::MC68010 => { todo!("MC68010 support"); (0x0000_ffff, 0x00ff_ffff) },
-            CPURevision::MC68020 => { todo!("MC68020 support"); (0xffff_ffff, 0xffff_ffff) },
-            CPURevision::MC68030 => { todo!("MC68030 support"); (0xffff_ffff, 0xffff_ffff) },
-            CPURevision::MC68040 => { todo!("MC68040 support"); (0xffff_ffff, 0xffff_ffff) },
+            CPURevision::MC68010 => { (0x0000_ffff, 0x00ff_ffff) },
+            CPURevision::MC68020 => { (0xffff_ffff, 0xffff_ffff) },
+            CPURevision::MC68030 => { (0xffff_ffff, 0xffff_ffff) },
+            CPURevision::MC68040 => { (0xffff_ffff, 0xffff_ffff) },
         };
+
+        if rev != CPURevision::MC68000 {
+            todo!("support for CPU revision {rev:?}")
+        }
 
         CPU {
             reg: Registers::new(),
@@ -926,7 +930,7 @@ impl CPU {
             post_cycles_read - pre_cycles_read,
             post_cycles_write - pre_cycles_write
         );
-        // self.print_state();
+        self.print_state();
 
         true
     }
