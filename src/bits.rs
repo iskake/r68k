@@ -52,6 +52,21 @@ impl DataSize {
         }
     }
 
+    /// Amount of shifts that must be performed on a bit to make it the msb.
+    /// 
+    /// |Size |sizeof |
+    /// |-----|-------|
+    /// |byte |     7 |
+    /// |word |    15 |
+    /// |long |    31 |
+    pub fn msb_shift(self) -> usize {
+        match self {
+            DataSize::Byte => 7,
+            DataSize::Word => 15,
+            DataSize::Long => 31,
+        }
+    }
+
     /// 32-bit bitmask of the given data size.
     /// 
     /// |Size | Mask         |

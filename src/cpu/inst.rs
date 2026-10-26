@@ -284,11 +284,16 @@ pub enum Instruction {
     ADDX { op: u16 },
     ADDA { op: u16 },
     // 1110
-    ASd  { op: u16 },
-    LSd  { op: u16 },
-    ROXd { op: u16 },
-    ROd  { op: u16 },
-    // ASd, LSd, ROXd, ROd (rotation)
+    // (shift/rotate memory)
+    ASdM { op: u16 },
+    LSdM { op: u16 },
+    ROXdM{ op: u16 },
+    ROdM { op: u16 },
+    // (shift/rotate data reg/immediate)
+    ASdD { op: u16 },
+    LSdD { op: u16 },
+    ROXdD{ op: u16 },
+    ROdD { op: u16 },
     // 1111
     // Floating point/supervisor instructions?
 
@@ -333,6 +338,41 @@ macro_rules! display_bop {
                 write!($f, "{}{} #imm,{}", $inst, s, am)
             }
         } 
+    };
+}
+
+macro_rules! display_shift_m {
+    ($f:expr, $inst:expr, $op:expr) => {
+        {
+            let am = AddressingMode::decode_op(*$op);
+            let d = if *$op & 0b100_000_000 != 0 { "l" } else { "r" };
+
+            write!($f, "{}{}.w {}", $inst, d, am)
+        }
+    };
+}
+
+macro_rules! display_shift_d {
+    ($f:expr, $inst:expr, $op:expr) => {
+        {
+            let m = (*$op & 0b100_000) != 0;
+            let s = get_op_size(*$op);
+            let d = if (*$op & 0b100_000_000) != 0 { "l" } else { "r" };
+            let dn_to_shift = get_op_xn_lo(*$op);
+            let mut count = get_op_xn_hi(*$op);
+
+            if m {
+                // Dx,Dy   ; Dy << Dx
+                write!($f, "{}{}{} d{},d{}", $inst, d, s, count, dn_to_shift)
+            } else {
+                // #imm,Dy ; Dy << #imm
+                if count == 0 {
+                    count = 8;
+                }
+
+                write!($f, "{}{}{} #{},d{}", $inst, d, s, count, dn_to_shift)
+            }
+        }
     };
 }
 
@@ -384,7 +424,7 @@ impl Display for Instruction {
                     write!(f, "movem{} list,{}", s, am)
                 }
             },
-            MOVEQ { op } => write!(f, "moveq #0x{:02x}", op & 0xff),
+            MOVEQ { op } => write!(f, "moveq #0x{:02x},d{}", op & 0xff, get_op_xn_hi(*op)),
             MOVEFromSR{ op } => write!(f, "move.w sr,{}", AddressingMode::decode_op(*op)),
             MOVEToCCR { op } => write!(f, "move.w {},ccr", AddressingMode::decode_op(*op)),
             MOVEToSR  { op } => write!(f, "move.w {},sr", AddressingMode::decode_op(*op)),
@@ -585,10 +625,14 @@ impl Display for Instruction {
             TAS   { op } => write!(f, "tas {}", AddressingMode::decode_op(*op)),
             TST   { op } => write!(f, "tst{} {}", get_op_size(*op), AddressingMode::decode_op(*op)),
             // shift/rotate
-            ASd   { op } => write!(f, "asd TMP"),
-            LSd   { op } => write!(f, "lsd TMP"),
-            ROXd  { op } => write!(f, "roxd TMP"),
-            ROd   { op } => write!(f, "rod TMP"),
+            ASdM   { op } => display_shift_m!(f, "as", op),
+            LSdM   { op } => display_shift_m!(f, "ls", op),
+            ROXdM  { op } => display_shift_m!(f, "rox", op),
+            ROdM   { op } => display_shift_m!(f, "ro", op),
+            ASdD   { op } => display_shift_d!(f, "as", op),
+            LSdD   { op } => display_shift_d!(f, "ls", op),
+            ROXdD  { op } => display_shift_d!(f, "rox", op),
+            ROdD   { op } => display_shift_d!(f, "ro", op),
             // bcd
             ABCD  { op } => {
                 let xx = get_op_xn_hi(*op);
@@ -692,9 +736,9 @@ impl Instruction {
             Instruction::BSR   { op } => bsr(op, cpu),
             Instruction::Bcc   { op } => bcc(op, cpu),
             // returns
-            Instruction::RTE   => rte(cpu),
-            Instruction::RTS   => rts(cpu),
-            Instruction::RTR   => rtr(cpu),
+            Instruction::RTE               => rte(cpu),
+            Instruction::RTS               => rts(cpu),
+            Instruction::RTR               => rtr(cpu),
             // link
             Instruction::LINK  { op } => link(op, cpu),
             Instruction::UNLK  { op } => unlk(op, cpu),
@@ -730,10 +774,14 @@ impl Instruction {
             Instruction::TAS   { op } => tas(op, cpu),
             Instruction::TST   { op } => tst(op, cpu),
             // shift/rotate
-            Instruction::ASd   { op } => todo!(),
-            Instruction::LSd   { op } => todo!(),
-            Instruction::ROXd  { op } => todo!(),
-            Instruction::ROd   { op } => todo!(),
+            Instruction::ASdM   { op } => asd_m(op, cpu),
+            Instruction::LSdM   { op } => lsd_m(op, cpu),
+            Instruction::ROXdM  { op } => roxd_m(op, cpu),
+            Instruction::ROdM   { op } => rod_m(op, cpu),
+            Instruction::ASdD   { op } => asd_d(op, cpu),
+            Instruction::LSdD   { op } => lsd_d(op, cpu),
+            Instruction::ROXdD  { op } => roxd_d(op, cpu),
+            Instruction::ROdD   { op } => rod_d(op, cpu),
             // bcd
             Instruction::ABCD  { op } => abcd(op, cpu),
             Instruction::SBCD  { op } => sbcd(op, cpu),
@@ -1469,6 +1517,167 @@ fn tst(op: u16, cpu: &mut CPU) {
     cpu.reg.sr.clear_v();
     cpu.reg.sr.clear_c();
 }
+
+macro_rules! define_shift_rot_m {
+    ($fn_name:ident, $shift_op:ident, $modify_x:expr, $modify_v:expr) => {
+        fn $fn_name(op: u16, cpu: &mut CPU) {
+            // Shift memory. Always shifts a single bit and data size is always a word.
+            let d = (op & 0b100_000_000) >> 8 != 0;
+            let am = AddressingMode::decode_op(op);
+
+            assert_valid_am(am, 0b0011111_11000);
+
+            let s = DataSize::Word;
+
+            cpu.cycle(4);   // +4(0/0)  (?: should be write?)
+
+            // Let's just do the am handling manually instead of adding more modify_am_* fn's
+            let am_addr = cpu.calculate_am_operand(s, am);
+            let mut mem_val = cpu.read_mem_size_internal(s, am_addr);
+
+            let c;
+
+            let prev_sign_bit = mem_val & s.sign_bit();
+
+            if d {
+                $shift_op!(l, c, mem_val , s);
+            } else {
+                $shift_op!(r, c, mem_val , s);
+            }
+
+            let msb_changed = ((mem_val & s.sign_bit()) ^ prev_sign_bit) != 0;
+
+            if $modify_x {
+                cpu.reg.sr.modify_x(c);
+            }
+            cpu.reg.sr.modify_n(mem_val & s.sign_bit() != 0);
+            cpu.reg.sr.modify_z(mem_val == 0);
+            if $modify_v {
+                cpu.reg.sr.modify_v(msb_changed);
+            }
+            cpu.reg.sr.modify_c(c);
+
+            cpu.write_mem_short(am_addr, mem_val as u16);
+        }
+    };
+}
+
+macro_rules! define_shift_rot_d {
+    ($fn_name:ident, $shift_op:ident, $modify_x:expr, $modify_v:expr) => {
+        fn $fn_name(op: u16, cpu: &mut CPU) {
+            // Shift data reg
+            let m = (op & 0b100_000) != 0;
+            let s = get_op_size(op);
+            let d = (op & 0b100_000_000) != 0;
+
+            if s == DataSize::Long {
+                cpu.cycle(4);   // +4(0/0)
+            } else {
+                cpu.cycle(2);   // +2(0/0)
+            }
+
+            let dn_to_shift = get_op_xn_lo(op).into();
+            let count = get_op_xn_hi(op);
+
+            let shift_count = if m {
+                // Dx,Dy   ; Dy << Dx
+                cpu.reg.read_data(count.into()) & 0x3f
+            } else {
+                // #imm,Dy ; Dy << #imm
+                if count == 0 {
+                    8
+                } else {
+                    count as u32 & 0x7
+                }
+            };
+
+            let mut dn_val = cpu.reg.read_data(dn_to_shift);
+            let mut c = false;
+            let mut msb_changed = false;
+
+            for _ in 0..shift_count {
+                let prev_sign_bit = dn_val & s.sign_bit();
+                if d {
+                    $shift_op!(l, c, dn_val, s);
+                } else {
+                    $shift_op!(r, c, dn_val, s);
+                }
+
+                if !msb_changed {
+                    msb_changed = ((dn_val & s.sign_bit()) ^ prev_sign_bit) != 0;
+                }
+
+                if $modify_x {
+                    cpu.reg.sr.modify_x(c);
+                }
+                // cpu.reg.sr.modify_c(c);
+
+                //? Is this needed every shift?
+                cpu.reg.write_data(dn_to_shift, s, dn_val);
+                cpu.cycle(2);
+            }
+
+            //? Should these change during the shifting too?
+            cpu.reg.sr.modify_n(dn_val & s.sign_bit() != 0);
+            cpu.reg.sr.modify_z(dn_val == 0);
+            if $modify_v {
+                cpu.reg.sr.modify_v(msb_changed);
+            }
+            cpu.reg.sr.modify_c(c);
+        }
+
+    };
+}
+
+macro_rules! asd_op {
+    (l, $c:expr, $dn_val:expr, $s:expr) => { 
+        // asl
+        $c = ($dn_val & $s.sign_bit()) != 0;
+        $dn_val = ($dn_val << 1) & $s.mask();
+    };
+    (r, $c:expr, $dn_val:expr, $s:expr) => {
+        // asr
+        $c = ($dn_val & 1) != 0;
+        let msb = $dn_val & $s.sign_bit();
+        $dn_val = (($dn_val & $s.mask()) >> 1) | msb;
+    };
+}
+
+macro_rules! lsd_op {
+    (l, $c:expr, $dn_val:expr, $s:expr) => { 
+        // lsl
+        $c = ($dn_val & $s.sign_bit()) != 0;
+        $dn_val = ($dn_val << 1) & $s.mask();
+    };
+    (r, $c:expr, $dn_val:expr, $s:expr) => {
+        // lsr
+        $c = ($dn_val & 1) != 0;
+        $dn_val = ($dn_val & $s.mask()) >> 1;
+    };
+}
+
+macro_rules! rod_op {
+    (l, $c:expr, $dn_val:expr, $s:expr) => { 
+        // rol
+        $c = ($dn_val & $s.sign_bit()) != 0;
+        $dn_val = (($dn_val << 1) & $s.mask()) | ($c as u32);
+    };
+    (r, $c:expr, $dn_val:expr, $s:expr) => {
+        // ror
+        $c = ($dn_val & 1) != 0;
+        $dn_val = (($dn_val & $s.mask()) >> 1) | (($c as u32) << $s.msb_shift());
+    };
+}
+
+define_shift_rot_m!(asd_m,  asd_op, true,  true);
+define_shift_rot_m!(lsd_m,  lsd_op, true,  false);
+define_shift_rot_m!(roxd_m, rod_op, true,  false);
+define_shift_rot_m!(rod_m,  rod_op, false, false);
+
+define_shift_rot_d!(asd_d,  asd_op, true,  true);
+define_shift_rot_d!(lsd_d,  lsd_op, true,  false);
+define_shift_rot_d!(roxd_d, rod_op, true,  false);
+define_shift_rot_d!(rod_d,  rod_op, false, false);
 
 macro_rules! define_xbcd {
     ($abcd:ident, $modify_am_abcd:ident) => {

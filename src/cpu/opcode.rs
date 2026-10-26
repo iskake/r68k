@@ -273,18 +273,18 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
         0b1110 => {
             if s == 0b11 {
                 match xn_hi {
-                    0b00 => ASd  { op },
-                    0b01 => LSd  { op },
-                    0b10 => ROXd { op },
-                    0b11 => ROd  { op },
+                    0b00 => ASdM  { op },
+                    0b01 => LSdM  { op },
+                    0b10 => ROXdM { op },
+                    0b11 => ROdM  { op },
                     _ => unreachable!()
                 }
             } else {
                 match m & 0b11 {
-                    0b00 => ASd  { op },
-                    0b01 => LSd  { op },
-                    0b10 => ROXd { op },
-                    0b11 => ROd  { op },
+                    0b00 => ASdD  { op },
+                    0b01 => LSdD  { op },
+                    0b10 => ROXdD { op },
+                    0b11 => ROdD  { op },
                     _ => unreachable!()
                 }
             }
