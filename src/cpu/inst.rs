@@ -505,10 +505,10 @@ impl Display for Instruction {
                 let an = get_op_xn_hi(*op);
                 write!(f, "suba{} {},a{}", s, am, an)
             },
-            DIVU  { op } => todo!(),
-            DIVS  { op } => todo!(),
-            MULU  { op } => todo!(),
-            MULS  { op } => todo!(),
+            DIVU  { op } => write!(f, "divu {},d{}", AddressingMode::decode_op(*op), get_op_xn_hi(*op)),
+            DIVS  { op } => write!(f, "divs {},d{}", AddressingMode::decode_op(*op), get_op_xn_hi(*op)),
+            MULU  { op } => write!(f, "mulu {},d{}", AddressingMode::decode_op(*op), get_op_xn_hi(*op)),
+            MULS  { op } => write!(f, "muls {},d{}", AddressingMode::decode_op(*op), get_op_xn_hi(*op)),
             // exceptions, etc.
             TRAP  { op } => write!(f, "trap #{}", op & 0xf),
             TRAPV              => write!(f, "trapv"),
@@ -716,10 +716,10 @@ impl Instruction {
             Instruction::SUBX  { op } => subx(op, cpu),
             Instruction::SUBA  { op } => suba(op, cpu),
             Instruction::SUBQ  { op } => subq(op, cpu),
-            Instruction::DIVU  { op } => todo!(),
-            Instruction::DIVS  { op } => todo!(),
-            Instruction::MULU  { op } => todo!(),
-            Instruction::MULS  { op } => todo!(),
+            Instruction::DIVU  { op } => div(op, cpu),
+            Instruction::DIVS  { op } => div(op, cpu),
+            Instruction::MULU  { op } => mul(op, cpu),
+            Instruction::MULS  { op } => mul(op, cpu),
             // exceptions, etc.
             Instruction::TRAP  { op } => trap(op, cpu),
             Instruction::TRAPV             => trapv(cpu),
@@ -1291,6 +1291,64 @@ define_opa!(suba, modify_am_sub, set_sr_flags_sub);
 define_opi!(subi, modify_am_sub, set_sr_flags_sub);
 define_opq!(subq, modify_am_sub, set_sr_flags_sub);
 define_opx!(subx, modify_am_sub, set_sr_flags_sub);
+
+fn div(op: u16, cpu: &mut CPU) {
+    todo!("div")
+}
+
+fn mul(op: u16, cpu: &mut CPU) {
+    // TODO: the other mc680x0 (x = 2,3,4 or CPU32) mul instructions
+
+    let dn = get_op_xn_hi(op).into();
+    let am = AddressingMode::decode_op(op);
+    assert_valid_am(am, 0b1011111_11111);
+
+    let src = cpu.read_am(DataSize::Word, am);
+    let dst = cpu.reg.read_data(dn) & 0xffff;
+
+    let unsigned = op & 0b100_000_000 == 0;
+
+    // "The multiply algorithm requires 38+2n clocks where"
+    let n = if unsigned {
+        // "n = the number of ones in the <ea>"
+        src.count_ones()
+    } else {
+        // "n = concatenate the <ea> with a zero as the LSB;
+        //    n is the resultant number of 10 or 01 patterns
+		//    in the 17-bit source; i.e., worst case happens
+		//    when the source is $5555"
+        let mut src_s = src << 1;
+        let mut i = 0;
+        for _ in 0..17 {
+            if src_s & 0b11 == 0b10 || src_s & 0b11 == 0b01 {
+                i += 1;
+            }
+            src_s >>= 1;
+        }
+        // ?
+        assert!(i <= 16);
+        i
+    };
+    cpu.cycle(32 + 2 * (n as usize));
+
+    let res = if op & 0b100_000_000 != 0 {
+        // muls
+        (src as i16 as i32 * dst as i16 as i32) as u32
+    } else {
+        // mulu
+        src * dst
+    };
+
+    cpu.reg.write_data(dn, DataSize::Long, res);
+
+    cpu.reg.sr.modify_n(res & DataSize::Long.sign_bit() != 0);
+    cpu.reg.sr.modify_z(res == 0);
+    // TODO: "Overflow (V = 1) can occur only when multiplying 32-bit operands to yield a 32-bit result."
+    cpu.reg.sr.clear_c();
+
+    // ?
+    cpu.cycle(2);
+}
 
 define_op! (or,   modify_am_or,  set_sr_flags_logical, 0b1011111_11111, 0b0011111_11000, false);
 define_opi!(ori,  modify_am_or,  set_sr_flags_logical);
