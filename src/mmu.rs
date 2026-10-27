@@ -3,15 +3,15 @@ use alloc::vec;
 
 pub trait MMU {
     fn read_byte_immutable(&self, addr: u32) -> u8;
-    fn read_short_immutable(&self, addr: u32) -> u16;
+    fn read_word_immutable(&self, addr: u32) -> u16;
     fn read_long_immutable(&self, addr: u32) -> u32;
 
     fn read_byte(&mut self, addr: u32) -> u8;
-    fn read_short(&mut self, addr: u32) -> u16;
+    fn read_word(&mut self, addr: u32) -> u16;
     fn read_long(&mut self, addr: u32) -> u32;
 
     fn write_byte(&mut self, addr: u32, val: u8);
-    fn write_short(&mut self, addr: u32, val: u16);
+    fn write_word(&mut self, addr: u32, val: u16);
     fn write_long(&mut self, addr: u32, val: u32);
 }
 
@@ -34,7 +34,7 @@ impl MMU for SimpleMMU {
         self.memory[addr as usize & (self.memory.len() - 1)]
     }
 
-    fn read_short_immutable(&self, addr: u32) -> u16 {
+    fn read_word_immutable(&self, addr: u32) -> u16 {
         let hi = self.read_byte_immutable(addr) as u16;
         let lo = self.read_byte_immutable(addr + 1) as u16;
 
@@ -42,8 +42,8 @@ impl MMU for SimpleMMU {
     }
 
     fn read_long_immutable(&self, addr: u32) -> u32 {
-        let hi = self.read_short_immutable(addr) as u32;
-        let lo = self.read_short_immutable(addr + 2) as u32;
+        let hi = self.read_word_immutable(addr) as u32;
+        let lo = self.read_word_immutable(addr + 2) as u32;
 
         (hi << 16) | lo
     }
@@ -52,7 +52,7 @@ impl MMU for SimpleMMU {
         self.memory[addr as usize & (self.memory.len() - 1)]
     }
 
-    fn read_short(&mut self, addr: u32) -> u16 {
+    fn read_word(&mut self, addr: u32) -> u16 {
         let hi = self.read_byte(addr) as u16;
         let lo = self.read_byte(addr + 1) as u16;
 
@@ -60,8 +60,8 @@ impl MMU for SimpleMMU {
     }
 
     fn read_long(&mut self, addr: u32) -> u32 {
-        let hi = self.read_short(addr) as u32;
-        let lo = self.read_short(addr + 2) as u32;
+        let hi = self.read_word(addr) as u32;
+        let lo = self.read_word(addr + 2) as u32;
 
         (hi << 16) | lo
     }
@@ -71,7 +71,7 @@ impl MMU for SimpleMMU {
         self.memory[addr] = val;
     }
 
-    fn write_short(&mut self, addr: u32, val: u16) {
+    fn write_word(&mut self, addr: u32, val: u16) {
         let hi = ((val & 0xff00) >> 8) as u8;
         let lo = (val & 0x00ff) as u8;
 
@@ -83,7 +83,7 @@ impl MMU for SimpleMMU {
         let hi = ((val & 0xffff0000) >> 16) as u16;
         let lo = (val & 0x0000ffff) as u16;
 
-        self.write_short(addr, hi);
-        self.write_short(addr + 2, lo);
+        self.write_word(addr, hi);
+        self.write_word(addr + 2, lo);
     }
 }

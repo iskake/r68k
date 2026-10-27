@@ -128,8 +128,8 @@ pub enum AddressingMode {
     /// 
     /// Either of 8bit displacement or base displacement
     PCIdx,
-    /// Absolute short `(xxx).W`
-    AbsShort,
+    /// Absolute word `(xxx).W`
+    AbsWord,
     /// Absolute long `(xxx).L`
     AbsLong,
     /// Immediate `#imm`
@@ -151,7 +151,7 @@ impl std::fmt::Display for AddressingMode {
             AddressingMode::AddrIdx(r)      => write!(f, "d(a{},Xn)", Into::<u8>::into(*r)),
             AddressingMode::PCDisplace                    => write!(f, "d(pc)"),
             AddressingMode::PCIdx                         => write!(f, "d(pc,Xn)"),
-            AddressingMode::AbsShort                      => write!(f, "(xxx).w"),
+            AddressingMode::AbsWord                      => write!(f, "(xxx).w"),
             AddressingMode::AbsLong                       => write!(f, "(xxx).l"),
             AddressingMode::Imm                           => write!(f, "#imm"),
             AddressingMode::Invalid                       => write!(f, "(invalid addressing mode)"),
@@ -178,7 +178,7 @@ impl AddressingMode {
             0b110 => AddrIdx(reg_n),
             0b111 => {
                 match reg {
-                    0b000 => AbsShort,
+                    0b000 => AbsWord,
                     0b001 => AbsLong,
                     0b010 => PCDisplace,
                     0b011 => PCIdx,
@@ -817,7 +817,7 @@ fn assert_valid_am(am: AddressingMode, mask: u32) {
         AddressingMode::AddrPreDec(_)   => (mask & 0b000010000000) != 0,
         AddressingMode::AddrDisplace(_) => (mask & 0b000001000000) != 0,
         AddressingMode::AddrIdx(_)      => (mask & 0b000000100000) != 0,
-        AddressingMode::AbsShort        => (mask & 0b000000010000) != 0,
+        AddressingMode::AbsWord        => (mask & 0b000000010000) != 0,
         AddressingMode::AbsLong         => (mask & 0b000000001000) != 0,
         AddressingMode::Imm             => (mask & 0b000000000100) != 0,
         AddressingMode::PCDisplace      => (mask & 0b000000000010) != 0,
@@ -898,7 +898,7 @@ fn movem(op: u16, cpu: &mut CPU) {
         _ => {}
     }
 
-    let list_mask = cpu.read_pc_inc_short();    // +4(1/0)
+    let list_mask = cpu.read_pc_inc_word();    // +4(1/0)
     let n = list_mask.count_ones();
     let (reversed, list_ptr, list_ptr_mod) = if let AddressingMode::AddrPreDec(_) = am {
         (true, 16, -1)
@@ -941,7 +941,7 @@ fn movem(op: u16, cpu: &mut CPU) {
 }
 
 fn movep(op: u16, cpu: &mut CPU) {
-    let displacement = cpu.read_pc_inc_short();
+    let displacement = cpu.read_pc_inc_word();
 
     let an: RegisterNum = get_op_xn_lo(op).into();
     let dn: RegisterNum = get_op_xn_hi(op).into();
@@ -1267,8 +1267,8 @@ macro_rules! define_opx {
 macro_rules! define_opi_to {
     (ccr, $fn_name:ident, $op:tt) => {
         fn $fn_name(cpu: &mut CPU) {
-            let src = cpu.read_pc_inc_short() & 0xff;   // +4(1/0)
-            cpu.read_pc_short();    // +4(1/0)  (dummy read)
+            let src = cpu.read_pc_inc_word() & 0xff;   // +4(1/0)
+            cpu.read_pc_word();    // +4(1/0)  (dummy read)
             cpu.cycle(8);           // +8(0/0)
             // Source ' CCR -> CCR
             let dst = cpu.reg.sr.ccr() as u16;
@@ -1279,8 +1279,8 @@ macro_rules! define_opi_to {
     (sr, $fn_name:ident, $op:tt) => {
         fn $fn_name(cpu: &mut CPU) {
             if cpu.reg.sr.supervisor_state() {
-                let src = cpu.read_pc_inc_short();   // +4(1/0)
-                cpu.read_pc_short();    // +4(1/0)  (dummy read)
+                let src = cpu.read_pc_inc_word();   // +4(1/0)
+                cpu.read_pc_word();    // +4(1/0)  (dummy read)
                 cpu.cycle(8);           // +8(0/0)
                 // Source ' SR -> SR
                 let dst = cpu.reg.sr.sr();
@@ -1596,7 +1596,7 @@ macro_rules! define_bop {
                 cpu.reg.read_data(dn) & size_mask
             } else {
                 // #<data>,<ea>
-                cpu.read_pc_inc_short() as u32 & size_mask  // +4(1/0)
+                cpu.read_pc_inc_word() as u32 & size_mask  // +4(1/0)
             };
 
             let old = if $modify {
@@ -1696,7 +1696,7 @@ macro_rules! define_shift_rot_m {
             }
             cpu.reg.sr.modify_c(c);
 
-            cpu.write_mem_short(am_addr, mem_val as u16);
+            cpu.write_mem_word(am_addr, mem_val as u16);
         }
     };
 }
@@ -1909,7 +1909,7 @@ fn trap_vec(vector_num: u8, cpu: &mut CPU) {
     cpu.reg.sr.set_supervisor();
 
     // ?
-    cpu.read_pc_short();    // +4(1/0)
+    cpu.read_pc_word();    // +4(1/0)
 
     if cpu.revision != CPURevision::MC68000 {
         // As is written elsewhere:
@@ -1918,7 +1918,7 @@ fn trap_vec(vector_num: u8, cpu: &mut CPU) {
         // Format + Offset word -> (SSP) 
         // SSP - 2 -> SSP
         let format_offset = 0x0000_0000;
-        cpu.push_sp_short(format_offset);  // +4(0/1) => 4(0/1)
+        cpu.push_sp_word(format_offset);  // +4(0/1) => 4(0/1)
         cpu.cycle(2);   // ?
         todo!("Format/offset -> (SSP)")
     }
@@ -1930,7 +1930,7 @@ fn trap_vec(vector_num: u8, cpu: &mut CPU) {
 
     // SR -> (SSP)
     // SSP - 2 -> SSP
-    cpu.push_sp_short(prev_sr);          // +4(0/1) => ??(1/3)
+    cpu.push_sp_word(prev_sr);          // +4(0/1) => ??(1/3)
     cpu.cycle(2);   // ?
 
     // (Vector) -> PC
@@ -1975,7 +1975,7 @@ fn chk(op: u16, cpu: &mut CPU) {
 
     if lt_cond || gt_cond {
         // ?
-        cpu.read_pc_short();   // +4(1/0)
+        cpu.read_pc_word();   // +4(1/0)
 
         //? N is "Set if Dn < 0; cleared if Dn > effective address operand; undefined otherwise."
         if lt_cond {
@@ -1993,7 +1993,7 @@ fn chk(op: u16, cpu: &mut CPU) {
 
 fn stop(cpu: &mut CPU) {
     if cpu.reg.sr.supervisor_state() {
-        let imm_data = cpu.read_pc_inc_short(); // +4(1/0)
+        let imm_data = cpu.read_pc_inc_word(); // +4(1/0)
         cpu.reg.sr.modify_sr(imm_data, cpu.revision);
         cpu.stopped = true;
     } else {
@@ -2049,7 +2049,7 @@ fn jmp(op: u16, cpu: &mut CPU) {
 /// Cycles: .b, .w: +4(1/0) | .l: +8(2/0)
 fn get_displacement_no_inc(cpu: &mut CPU, disp_tmp: u16) -> i32 {
     if disp_tmp == 0x00 { 
-        cpu.read_pc_short().sign_extend() as i32  // +4(1/0)
+        cpu.read_pc_word().sign_extend() as i32  // +4(1/0)
     } else if disp_tmp == 0xff
         && (cpu.revision == CPURevision::MC68020
         ||  cpu.revision == CPURevision::MC68030
@@ -2059,7 +2059,7 @@ fn get_displacement_no_inc(cpu: &mut CPU, disp_tmp: u16) -> i32 {
     } else {
         // Seems to have the same amount of cycles as 16 bit displacement,
         // so we just read at the pc anyway.
-        cpu.read_pc_short();            // +4(1/0)
+        cpu.read_pc_word();            // +4(1/0)
         (disp_tmp as u8).sign_extend() as i32
     }
 }
@@ -2111,7 +2111,7 @@ fn dbcc(op: u16, cpu: &mut CPU) {
     // DBcc
     let condition = (op & 0x0f00) >> 8;
     let condition: Condition = condition.into();
-    let disp = cpu.read_pc_short();
+    let disp = cpu.read_pc_word();
 
     // CURR CYCLES: 8(2/0)
     if !condition.is_true(cpu) {
@@ -2128,7 +2128,7 @@ fn dbcc(op: u16, cpu: &mut CPU) {
             cpu.reg.pc = cpu.reg.pc.wrapping_add_signed(displacement);
         } else {
             // branch not taken => cycs: 14(3/0)
-            cpu.read_pc_inc_short();    // +4(1/0)
+            cpu.read_pc_inc_word();    // +4(1/0)
         }
         cpu.cycle(2);           // +2(0/0)
     } else {
@@ -2143,12 +2143,12 @@ fn rte(cpu: &mut CPU) {
     // - RTS: 16(4/0)
     // - RTR: 20(5/0)
     // - RTE: 20(5/0)
-    cpu.read_pc_short();                     // +4(1/0) (dummy read)
+    cpu.read_pc_word();                     // +4(1/0) (dummy read)
 
     if cpu.reg.sr.supervisor_state() {
         // (SP) -> SR;
         // SP + 2 -> PC;
-        let val = cpu.pop_sp_short();   // +4(1/0)
+        let val = cpu.pop_sp_word();   // +4(1/0)
         cpu.reg.sr.modify_sr(val, cpu.revision);
 
         // (SP) -> PC;
@@ -2167,7 +2167,7 @@ fn rte(cpu: &mut CPU) {
 
 fn rts(cpu: &mut CPU) {
     // Like rte and rtr, this incsruction has an extra read cycle
-    cpu.read_pc_short();                     // +4(1/0) (dummy read)
+    cpu.read_pc_word();                     // +4(1/0) (dummy read)
 
     // (SP) -> PC;
     // SP + 4 -> SP
@@ -2176,11 +2176,11 @@ fn rts(cpu: &mut CPU) {
 
 fn rtr(cpu: &mut CPU) {
     // Like rts and rte, this incsruction has an extra read cycle
-    cpu.read_pc_short();                     // +4(1/0) (dummy read)
+    cpu.read_pc_word();                     // +4(1/0) (dummy read)
 
     // (SP) -> CCR;
     // SP + 2 -> SP
-    let val = cpu.pop_sp_short();
+    let val = cpu.pop_sp_word();
     cpu.reg.sr.modify_ccr(val);              // +4(1/0)
     // (SP) -> PC;
     // SP + 4 -> SP
@@ -2192,7 +2192,7 @@ fn link(op: u16, cpu: &mut CPU) {
 
     let displacement = if op & 0b0000011001010000 != 0 {
         // word
-        cpu.read_pc_inc_short().sign_extend() // +4(1/0)
+        cpu.read_pc_inc_word().sign_extend() // +4(1/0)
     } else {
         // long (only on mc680x0 where x >= 2)
         cpu.read_pc_inc_long()  //

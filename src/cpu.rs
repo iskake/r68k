@@ -388,8 +388,8 @@ impl<'a> CPU<'a> {
     }
 
     /// Cycles: 0(0/0)
-    pub fn write_mem_short_internal(&mut self, addr: u32, val: u16) {
-        self.mmu.write_short(addr & self.addr_bus_mask, val);
+    pub fn write_mem_word_internal(&mut self, addr: u32, val: u16) {
+        self.mmu.write_word(addr & self.addr_bus_mask, val);
     }
 
     /// Cycles: 0(0/0)
@@ -407,11 +407,11 @@ impl<'a> CPU<'a> {
     }
 
     /// Cycles: 4(0/1)
-    fn write_mem_short(&mut self, addr: u32, val: u16) {
+    fn write_mem_word(&mut self, addr: u32, val: u16) {
         self.update_data_bus(val as u32);
         self.update_addr_bus(addr);
 
-        self.write_mem_short_internal(addr, val);
+        self.write_mem_word_internal(addr, val);
         self.cycle_write();
     }
 
@@ -425,12 +425,12 @@ impl<'a> CPU<'a> {
             self.update_addr_bus(addr);
             self.update_data_bus(val_hi as u32);
 
-            self.write_mem_short_internal(addr, val_hi);
+            self.write_mem_word_internal(addr, val_hi);
             self.cycle_write();
 
             self.update_data_bus(val_lo as u32);
 
-            self.write_mem_short_internal(addr+2, val_lo);
+            self.write_mem_word_internal(addr+2, val_lo);
             self.cycle_write();
         } else {
             self.update_data_bus(val);
@@ -452,7 +452,7 @@ impl<'a> CPU<'a> {
             // 1 write cycle
             DataSize::Byte => self.write_mem_byte(addr, val as u8),
             // 1 write cycle
-            DataSize::Word => self.write_mem_short(addr, val as u16),
+            DataSize::Word => self.write_mem_word(addr, val as u16),
             // 2 write cycles
             DataSize::Long => self.write_mem_long(addr, val),
         }
@@ -463,9 +463,9 @@ impl<'a> CPU<'a> {
         self.mmu.read_byte_immutable(addr & self.addr_bus_mask)
     }
 
-    /// Read a short without mutating memory at all.
-    pub fn read_mem_short_immutable(&self, addr: u32) -> u16 {
-        self.mmu.read_short_immutable(addr & self.addr_bus_mask)
+    /// Read a word without mutating memory at all.
+    pub fn read_mem_word_immutable(&self, addr: u32) -> u16 {
+        self.mmu.read_word_immutable(addr & self.addr_bus_mask)
     }
 
     /// Read a long without mutating memory at all.
@@ -479,8 +479,8 @@ impl<'a> CPU<'a> {
     }
 
     /// Cycles: 0(0/0)
-    pub fn read_mem_short_internal(&mut self, addr: u32) -> u16 {
-        self.mmu.read_short(addr & self.addr_bus_mask)
+    pub fn read_mem_word_internal(&mut self, addr: u32) -> u16 {
+        self.mmu.read_word(addr & self.addr_bus_mask)
     }
 
     /// Cycles: 0(0/0)
@@ -492,14 +492,14 @@ impl<'a> CPU<'a> {
     fn read_mem_size_internal(&mut self, size: DataSize, addr: u32) -> u32 {
         match size {
             DataSize::Byte => self.read_mem_byte_internal(addr) as u32,
-            DataSize::Word => self.read_mem_short_internal(addr) as u32,
+            DataSize::Word => self.read_mem_word_internal(addr) as u32,
             DataSize::Long => self.read_mem_long_internal(addr),
         }
     }
 
     /// Cycles: 4(1/0)
     fn read_mem_byte(&mut self, addr: u32) -> u8 {
-        // Bus is 16 bits wide, so 1 read cycle (same as short) is always performed
+        // Bus is 16 bits wide, so 1 read cycle (same as word) is always performed
         self.update_addr_bus(addr);
 
         let val = self.read_mem_byte_internal(addr & self.addr_bus_mask);
@@ -511,10 +511,10 @@ impl<'a> CPU<'a> {
     }
 
     /// Cycles: 4(1/0)
-    fn read_mem_short(&mut self, addr: u32) -> u16 {
+    fn read_mem_word(&mut self, addr: u32) -> u16 {
         self.update_addr_bus(addr);
 
-        let val = self.read_mem_short_internal(addr & self.addr_bus_mask);
+        let val = self.read_mem_word_internal(addr & self.addr_bus_mask);
 
         self.update_data_bus(val as u32);
         self.cycle_read();
@@ -528,12 +528,12 @@ impl<'a> CPU<'a> {
             // 16-bit data bus
             self.update_addr_bus(addr);
 
-            let val_hi = self.read_mem_short_internal(addr & self.addr_bus_mask) as u32;
+            let val_hi = self.read_mem_word_internal(addr & self.addr_bus_mask) as u32;
 
             self.update_data_bus(val_hi);
             self.cycle_read();
 
-            let val_lo = self.read_mem_short_internal((addr+2) & self.addr_bus_mask) as u32;
+            let val_lo = self.read_mem_word_internal((addr+2) & self.addr_bus_mask) as u32;
 
             self.update_data_bus(val_lo);
             self.cycle_read();
@@ -561,7 +561,7 @@ impl<'a> CPU<'a> {
             // 1 read cycle
             DataSize::Byte => self.read_mem_byte(addr) as u32,
             // 1 read cycle
-            DataSize::Word => self.read_mem_short(addr) as u32,
+            DataSize::Word => self.read_mem_word(addr) as u32,
             // 2 read cycles
             DataSize::Long => self.read_mem_long(addr),
         }
@@ -572,7 +572,7 @@ impl<'a> CPU<'a> {
     /// Cycles: 4(1/0)
     fn read_extension_brief(&mut self) -> (bool, RegisterNum, DataSize, u8, u8) {
         // TODO: full extension words (used in 68020, 68030, and 68040)
-        let w = self.read_pc_inc_short();
+        let w = self.read_pc_inc_word();
 
         let mode = w & 0x8000 != 0;
         let xn: RegisterNum = (((w & 0x7000) >> 12) as u8).into();
@@ -616,7 +616,7 @@ impl<'a> CPU<'a> {
             // 8(2/0) | 12(3/0)
             AddressingMode::AddrDisplace(an) => {
                 let r = self.reg.read_address(an);
-                let d = self.read_pc_inc_short().sign_extend();
+                let d = self.read_pc_inc_word().sign_extend();
                 let addr = r + d;
                 addr
             },
@@ -651,7 +651,7 @@ impl<'a> CPU<'a> {
             // 8(2/0) | 12(3/0)
             AddressingMode::PCDisplace => {
                 let pc = self.reg.pc;
-                let d = self.read_pc_inc_short().sign_extend();
+                let d = self.read_pc_inc_word().sign_extend();
                 let addr = pc + d;
 
                 addr
@@ -686,9 +686,9 @@ impl<'a> CPU<'a> {
                 addr
             },
             // 8(2/0) | 12(3/0)
-            AddressingMode::AbsShort => {
+            AddressingMode::AbsWord => {
                 // ?
-                let addr = self.read_pc_inc_short().sign_extend();
+                let addr = self.read_pc_inc_word().sign_extend();
 
                 addr
             },
@@ -740,8 +740,8 @@ impl<'a> CPU<'a> {
             // 4(1/0) | 8(2/0)
             AddressingMode::Imm => {
                 match size {
-                    DataSize::Byte => self.read_pc_inc_short() as u32 & 0xff,
-                    DataSize::Word => self.read_pc_inc_short() as u32,
+                    DataSize::Byte => self.read_pc_inc_word() as u32 & 0xff,
+                    DataSize::Word => self.read_pc_inc_word() as u32,
                     DataSize::Long => self.read_pc_inc_long(),
                 }
             },
@@ -815,9 +815,9 @@ impl<'a> CPU<'a> {
     /// ```
     /// 
     /// Cycles: 4(0/1)
-    pub fn push_sp_short(&mut self, val: u16) {
+    pub fn push_sp_word(&mut self, val: u16) {
         self.reg.dec_address(RegisterNum::R7, DataSize::Word);
-        self.write_mem_short(self.reg.read_address(RegisterNum::R7), val)
+        self.write_mem_word(self.reg.read_address(RegisterNum::R7), val)
     }
 
     /// Push an element on top of the stack.
@@ -843,8 +843,8 @@ impl<'a> CPU<'a> {
     /// ```
     /// 
     /// Cycles: 4(2/0)
-    pub fn pop_sp_short(&mut self) -> u16 {
-        let res = self.read_mem_short(self.reg.read_address(RegisterNum::R7));
+    pub fn pop_sp_word(&mut self) -> u16 {
+        let res = self.read_mem_word(self.reg.read_address(RegisterNum::R7));
         self.reg.inc_address(RegisterNum::R7, DataSize::Word);
         res
     }
@@ -866,14 +866,14 @@ impl<'a> CPU<'a> {
 
 
     /// Cycles: 4(1/0)
-    pub fn read_pc_short(&mut self) -> u16 {
-        let val = self.read_mem_short(self.reg.pc);
+    pub fn read_pc_word(&mut self) -> u16 {
+        let val = self.read_mem_word(self.reg.pc);
         val
     }
 
     /// Cycles: 4(1/0)
-    pub fn read_pc_inc_short(&mut self) -> u16 {
-        let val = self.read_mem_short(self.reg.pc);
+    pub fn read_pc_inc_word(&mut self) -> u16 {
+        let val = self.read_mem_word(self.reg.pc);
         self.reg.pc += 2;
         val
     }
@@ -886,8 +886,8 @@ impl<'a> CPU<'a> {
     /// Cycles: 8(2/0)
     pub fn read_pc_inc_long(&mut self) -> u32 {
         if self.data_bus_mask & 0x8000_0000 == 0 {
-            let val_hi = self.read_pc_inc_short() as u32;
-            let val_lo = self.read_pc_inc_short() as u32;
+            let val_hi = self.read_pc_inc_word() as u32;
+            let val_lo = self.read_pc_inc_word() as u32;
             (val_hi << 16) | val_lo
         } else {
             let val = self.read_pc_long();
@@ -900,12 +900,12 @@ impl<'a> CPU<'a> {
     pub fn read_pc_inc_size(&mut self, size: DataSize) -> u32 {
         match size {
             DataSize::Long => self.read_pc_inc_long(),
-            _ => (self.read_pc_inc_short() as u32) & size.mask(),
+            _ => (self.read_pc_inc_word() as u32) & size.mask(),
         }
     }
 
     fn fetch_and_run(&mut self) {
-        let op = self.read_pc_inc_short();
+        let op = self.read_pc_inc_word();
         let inst = opcode::decode_opcode(op);
 
         #[cfg(feature = "std")]
