@@ -349,7 +349,7 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
                     0b01 => valid(op, MASK_MEM_ALTERABLE, LSdM  { op }),
                     0b10 => valid(op, MASK_MEM_ALTERABLE, ROXdM { op }),
                     0b11 => valid(op, MASK_MEM_ALTERABLE, ROdM  { op }),
-                    _ => unreachable!()
+                    _ => Undefined { op }
                 }
             } else {
                 match m & 0b11 {
