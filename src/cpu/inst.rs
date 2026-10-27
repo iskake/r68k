@@ -160,7 +160,7 @@ impl std::fmt::Display for AddressingMode {
 }
 
 impl AddressingMode {
-    fn decode(mode: u8, reg: u8) -> AddressingMode {
+    pub(crate) fn decode(mode: u8, reg: u8) -> AddressingMode {
         use AddressingMode::*;
 
         assert_eq!(mode & 0b111, mode);
@@ -190,7 +190,7 @@ impl AddressingMode {
         }
     }
 
-    fn decode_op(op: u16) -> AddressingMode {
+    pub(crate) fn decode_op(op: u16) -> AddressingMode {
         let mode = get_op_m_lo(op);
         let reg  = get_op_xn_lo(op);
         AddressingMode::decode(mode, reg)
@@ -805,36 +805,6 @@ impl Instruction {
     }
 }
 
-/// Performs an assertion on whether the specified addressing mode
-/// complies with the given addressing mode validity mask.
-// TODO: validate addressing mode during opcode decoding instead of panicing at "runtime"
-fn assert_valid_am(am: AddressingMode, mask: u32) {
-    let valid = match am {
-        AddressingMode::DataReg(_)      => (mask & 0b100000000000) != 0,
-        AddressingMode::AddrReg(_)      => (mask & 0b010000000000) != 0,
-        AddressingMode::Addr(_)         => (mask & 0b001000000000) != 0,
-        AddressingMode::AddrPostInc(_)  => (mask & 0b000100000000) != 0,
-        AddressingMode::AddrPreDec(_)   => (mask & 0b000010000000) != 0,
-        AddressingMode::AddrDisplace(_) => (mask & 0b000001000000) != 0,
-        AddressingMode::AddrIdx(_)      => (mask & 0b000000100000) != 0,
-        AddressingMode::AbsWord        => (mask & 0b000000010000) != 0,
-        AddressingMode::AbsLong         => (mask & 0b000000001000) != 0,
-        AddressingMode::Imm             => (mask & 0b000000000100) != 0,
-        AddressingMode::PCDisplace      => (mask & 0b000000000010) != 0,
-        AddressingMode::PCIdx           => (mask & 0b000000000001) != 0,
-        AddressingMode::Invalid         => false,
-    };
-
-    cfg_select! {
-        feature = "std" => {
-            assert!(valid, "Invalid addressing mode: `{am}` (mask: {mask:012b})");
-        }
-        _ => {
-            assert!(valid, "Invalid addressing mode (mask: {mask:012b})")
-        }
-    }
-}
-
 fn move_(op: u16, cpu: &mut CPU) {
     let s = get_op_size_alt(op, SIZE_SHIFT_MOVE);
     let am_src = AddressingMode::decode_op(op);
@@ -843,7 +813,6 @@ fn move_(op: u16, cpu: &mut CPU) {
     let xn_hi = get_op_xn_hi(op);
     let m_hi = get_op_m_hi(op);
     let am_dst = AddressingMode::decode(m_hi, xn_hi);
-    assert_valid_am(am_dst, 0b1011111_11000);
 
     let src_val = cpu.read_am(s, am_src);
     cpu.write_am(s, am_dst, src_val);
@@ -882,21 +851,7 @@ fn moveq(op: u16, cpu: &mut CPU) {
 fn movem(op: u16, cpu: &mut CPU) {
     let size = get_op_size_bit6(op);
     let am = AddressingMode::decode_op(op);
-    let direction_from_mem = op & 0x0400 != 0;
-
-    match am {
-        AddressingMode::AddrPostInc(_) if !direction_from_mem => {
-            panic!("Postincrement for movem can only be used for mem -> reg operations")
-        },
-        AddressingMode::AddrPreDec(_) if direction_from_mem => {
-            panic!("Predecrement for movem can only be used for reg -> mem operations")
-        },
-        AddressingMode::DataReg(_)
-        | AddressingMode::AddrReg(_)
-        | AddressingMode::Imm
-        | AddressingMode::Invalid => assert_valid_am(am, 0),
-        _ => {}
-    }
+    let d = op & 0x0400 != 0;
 
     let list_mask = cpu.read_pc_inc_word();    // +4(1/0)
     let n = list_mask.count_ones();
@@ -906,7 +861,7 @@ fn movem(op: u16, cpu: &mut CPU) {
         (false, 0, 1)
     };
 
-    if direction_from_mem {
+    if d {
         // mem -> reg
         for i in 0..16 {
             if list_mask & (1 << i) != 0 {
@@ -996,7 +951,6 @@ fn movep(op: u16, cpu: &mut CPU) {
 
 fn move_from_sr(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);
-    assert_valid_am(am, 0b101111111000);
 
     if cpu.reg.sr.supervisor_state() || cpu.revision == CPURevision::MC68000 {
         let val = cpu.reg.sr.sr();
@@ -1015,7 +969,6 @@ fn move_from_sr(op: u16, cpu: &mut CPU) {
 
 fn move_to_ccr(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);
-    assert_valid_am(am, 0b101111111111);
 
     // Source -> CCR
     let val = cpu.read_am(DataSize::Word, am);  // +x(r/0)
@@ -1025,7 +978,6 @@ fn move_to_ccr(op: u16, cpu: &mut CPU) {
 
 fn move_to_sr(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);
-    assert_valid_am(am, 0b101111111111);
 
     if cpu.reg.sr.supervisor_state() {
         let val = cpu.read_am(DataSize::Word, am);  // +x(r/0)
@@ -1105,7 +1057,7 @@ fn set_sr_flags_logical(cpu: &mut CPU, s: DataSize, _: u32, _: u32, res: u32) {
 
 // Since add[a|q|...] and sub[a|q|...] are almost the exact same
 macro_rules! define_op {
-    ($add:ident, $modify_am_add:ident, $set_sr_flags_add:ident, $ea_dn_mask:expr, $dn_ea_mask:expr, $is_eor:expr) => {
+    ($add:ident, $modify_am_add:ident, $set_sr_flags_add:ident, $is_eor:expr) => {
         fn $add(op: u16, cpu: &mut CPU) {
             let am = AddressingMode::decode_op(op);
 
@@ -1114,10 +1066,6 @@ macro_rules! define_op {
             let dn = get_op_xn_hi(op).into();
 
             if m & 0b100 == 0 && !$is_eor {
-                if $ea_dn_mask != 0b1111111_11111 {
-                    assert_valid_am(am, $ea_dn_mask);
-                }
-
                 if s == DataSize::Long {
                     match am {
                         AddressingMode::DataReg(_) | AddressingMode::AddrReg(_) => cpu.cycle(4),
@@ -1132,10 +1080,6 @@ macro_rules! define_op {
 
                 $set_sr_flags_add(cpu, s, old, val, res);
             } else {
-                if $dn_ea_mask != 0b1111111_11111 {
-                    assert_valid_am(am, $dn_ea_mask);
-                }
-
                 // TODO?: Is it possible for a Dy ' Dx -> Dx (where second <ea> = Dx) to be
                 // decoded into this path (i.e. m & 0b100 != 0) instead of the above one?
                 if s != DataSize::Long {
@@ -1207,7 +1151,6 @@ macro_rules! define_opq {
         fn $addq(op: u16, cpu: &mut CPU) {
             let s = get_op_size(op);
             let am = AddressingMode::decode_op(op);
-            assert_valid_am(am, 0b1111111_11000);
 
             let val = ((op & 0xe00) >> 9) as u32;
 
@@ -1292,13 +1235,13 @@ macro_rules! define_opi_to {
     };
 }
 
-define_op! (add,  modify_am_add, set_sr_flags_add, 0b1111111_11111, 0b1111111_11111, false);
+define_op! (add,  modify_am_add, set_sr_flags_add, false);
 define_opa!(adda, modify_am_add, set_sr_flags_add);
 define_opi!(addi, modify_am_add, set_sr_flags_add);
 define_opq!(addq, modify_am_add, set_sr_flags_add);
 define_opx!(addx, modify_am_add, set_sr_flags_add);
 
-define_op! (sub,  modify_am_sub, set_sr_flags_sub, 0b1111111_11111, 0b1111111_11111, false);
+define_op! (sub,  modify_am_sub, set_sr_flags_sub, false);
 define_opa!(suba, modify_am_sub, set_sr_flags_sub);
 define_opi!(subi, modify_am_sub, set_sr_flags_sub);
 define_opq!(subq, modify_am_sub, set_sr_flags_sub);
@@ -1309,7 +1252,6 @@ fn div(op: u16, cpu: &mut CPU) {
 
     let dn = get_op_xn_hi(op).into();
     let am = AddressingMode::decode_op(op);
-    assert_valid_am(am, 0b1011111_11111);
 
     let src = cpu.read_am(DataSize::Word, am);
     let dst = cpu.reg.read_data(dn);
@@ -1382,7 +1324,6 @@ fn mul(op: u16, cpu: &mut CPU) {
 
     let dn = get_op_xn_hi(op).into();
     let am = AddressingMode::decode_op(op);
-    assert_valid_am(am, 0b1011111_11111);
 
     let src = cpu.read_am(DataSize::Word, am);
     let dst = cpu.reg.read_data(dn) & 0xffff;
@@ -1431,13 +1372,13 @@ fn mul(op: u16, cpu: &mut CPU) {
     cpu.cycle(2);
 }
 
-define_op! (or,   modify_am_or,  set_sr_flags_logical, 0b1011111_11111, 0b0011111_11000, false);
+define_op! (or,   modify_am_or,  set_sr_flags_logical, false);
 define_opi!(ori,  modify_am_or,  set_sr_flags_logical);
 
-define_op! (and,  modify_am_and, set_sr_flags_logical, 0b1011111_11111, 0b0011111_11000, false);
+define_op! (and,  modify_am_and, set_sr_flags_logical, false);
 define_opi!(andi, modify_am_and, set_sr_flags_logical);
 
-define_op! (eor,  modify_am_eor, set_sr_flags_logical, 0b0000000_00000, 0b1011111_11000, true);
+define_op! (eor,  modify_am_eor, set_sr_flags_logical, true);
 define_opi!(eori, modify_am_eor, set_sr_flags_logical);
 
 define_opi_to!(ccr, ori_to_ccr,  |);
@@ -1507,12 +1448,6 @@ fn cmpi(op: u16, cpu: &mut CPU) {
     let s = get_op_size(op);
     let am = AddressingMode::decode_op(op);
 
-    if cpu.revision == MC68000 {
-        assert_valid_am(am, 0b1011111_11000);
-    } else {
-        assert_valid_am(am, 0b1011111_11011);
-    }
-
     if let AddressingMode::DataReg(_) = am && s == DataSize::Long {
         cpu.cycle(2);   // +2(0/0)
     }
@@ -1530,7 +1465,6 @@ fn cmpi(op: u16, cpu: &mut CPU) {
 fn neg(op: u16, cpu: &mut CPU) {
     let s = get_op_size(op);
     let am = AddressingMode::decode_op(op);
-    assert_valid_am(am, 0b1011111_11000);
 
     match am {
         AddressingMode::DataReg(_) => if s == DataSize::Long { cpu.cycle(2) },      // +0(0/0) | +2(0/0)
@@ -1559,7 +1493,6 @@ fn neg(op: u16, cpu: &mut CPU) {
 fn not(op: u16, cpu: &mut CPU) {
     let s = get_op_size(op);
     let am = AddressingMode::decode_op(op);
-    assert_valid_am(am, 0b1011111_11000);
 
     match am {
         AddressingMode::DataReg(_) => if s == DataSize::Long { cpu.cycle(2) },      // +0(0/0) | +2(0/0)
@@ -1578,7 +1511,6 @@ macro_rules! define_bop {
     ($fn_name: ident, $modify_am_fn: ident, $modify: expr) => {
         fn $fn_name(op: u16, cpu: &mut CPU) {
             let am = AddressingMode::decode_op(op);
-            assert_valid_am(am, 0b1011111_11000);
 
             let xn = get_op_xn_hi(op);
 
@@ -1620,7 +1552,6 @@ define_bop!(bchg, modify_am_chg, true);
 
 fn tas(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);
-    assert_valid_am(am, 0b1011111_11000);
 
     let s = DataSize::Byte;
     let (val,_) = cpu.modify_am_tas(s, am);
@@ -1644,11 +1575,6 @@ fn tst(op: u16, cpu: &mut CPU) {
     let s = get_op_size(op);
     let am = AddressingMode::decode_op(op);
 
-    if cpu.revision == MC68000 || cpu.revision == MC68010 {
-        assert_valid_am(am, 0b101111111000);
-    }
-    // (MC68020, MC68030, MC68040, and CPU32 allow all addressing modes)
-
     let val = cpu.read_am(s, am);
 
     cpu.reg.sr.modify_n(is_negative(val, s));
@@ -1663,8 +1589,6 @@ macro_rules! define_shift_rot_m {
             // Shift memory. Always shifts a single bit and data size is always a word.
             let d = (op & 0b100_000_000) >> 8 != 0;
             let am = AddressingMode::decode_op(op);
-
-            assert_valid_am(am, 0b0011111_11000);
 
             let s = DataSize::Word;
 
@@ -1884,8 +1808,6 @@ fn lea(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);
     let an: RegisterNum = get_op_xn_hi(op).into();
 
-    assert_valid_am(am, 0b0010011_11011);
-
     let val = cpu.calculate_am_operand(DataSize::Long, am);
     // <ea> -> An
     cpu.reg.write_address(an, DataSize::Long, val);
@@ -1893,8 +1815,6 @@ fn lea(op: u16, cpu: &mut CPU) {
 
 fn pea(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);
-
-    assert_valid_am(am, 0b0010011_11011);
 
     let val = cpu.calculate_am_operand(DataSize::Long, am);
     // SP - 4 -> SP;
@@ -1963,7 +1883,6 @@ fn trap_illegal(_op: u16, cpu: &mut CPU) {
 fn chk(op: u16, cpu: &mut CPU) {
     let s = get_op_size_alt(op, SIZE_SHIFT_CHK);
     let am = AddressingMode::decode_op(op);
-    assert_valid_am(am, 0b1011111_11111);
     let dn = get_op_xn_hi(op).into();
 
     cpu.cycle(6);       // +6(0/0)
@@ -2022,8 +1941,6 @@ fn reset(cpu: &mut CPU) {
 
 fn jmp(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);
-
-    assert_valid_am(am, 0b0010011_11011);
 
     // jumps work a bit different from usual instructions in that working with
     // "pointers" leads to jumping to the pointer, not reading what's at that address.
@@ -2290,7 +2207,6 @@ fn exg(op: u16, cpu: &mut CPU) {
 fn clr(op: u16, cpu: &mut CPU) {
     let s = get_op_size(op);
     let am = AddressingMode::decode_op(op);
-    assert_valid_am(am, 0b1011111_11000);
 
     match am {
         AddressingMode::DataReg(_) => if s == DataSize::Long { cpu.cycle(2) },      // +0(0/0) | +2(0/0)
@@ -2313,7 +2229,6 @@ fn clr(op: u16, cpu: &mut CPU) {
 fn scc(op: u16, cpu: &mut CPU) {
     let am = AddressingMode::decode_op(op);
     let condition = Condition::from((op & 0xf00) >> 8);
-    assert_valid_am(am, 0b1011111_11000);
 
     match am {
         AddressingMode::DataReg(_) => {},

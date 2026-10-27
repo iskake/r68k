@@ -1,4 +1,14 @@
-use crate::{bits::DataSize, cpu::inst::Instruction};
+use crate::{bits::DataSize, cpu::inst::{AddressingMode, Instruction}};
+
+const MASK_ALTERABLE: u32      = 0b1111111_11000;
+const MASK_MEM_ALTERABLE: u32  = 0b0011111_11000;
+const MASK_DATA_ALTERABLE: u32 = 0b1011111_11000;
+const MASK_DATA: u32           = 0b1011111_11111;
+const MASK_CONTROL: u32        = 0b0010011_11011;
+const MASK_CONTROL_ALT: u32    = 0b0010011_11000;
+
+const MASK_BIT_POSTINC: u32    = 0b0001000_00000;
+const MASK_BIT_PREDEC: u32     = 0b0000100_00000;
 
 pub(crate) fn get_op_xn_hi(op: u16) -> u8 {
     ((op & 0b111_000_000_000) >> 9) as u8
@@ -50,6 +60,39 @@ pub(crate) fn get_op_size_alt(op: u16, shift: u8) -> DataSize {
     (((sh & !sl) << 1) | (sh & sl)).into()
 }
 
+/// Checks whether the specified addressing mode complies with the
+/// given addressing mode validity mask. If this is not the case,
+/// an Undefined instruction is returned instead.
+fn valid(op: u16, mask: u32, inst: Instruction) -> Instruction {
+    let am = AddressingMode::decode_op(op);
+    validate_am(op, am, mask, inst)
+}
+
+fn validate_am(op: u16, am: AddressingMode, mask: u32, inst: Instruction) -> Instruction {
+    let valid = match am {
+        AddressingMode::DataReg(_)      => (mask & 0b100000000000) != 0,
+        AddressingMode::AddrReg(_)      => (mask & 0b010000000000) != 0,
+        AddressingMode::Addr(_)         => (mask & 0b001000000000) != 0,
+        AddressingMode::AddrPostInc(_)  => (mask & 0b000100000000) != 0,
+        AddressingMode::AddrPreDec(_)   => (mask & 0b000010000000) != 0,
+        AddressingMode::AddrDisplace(_) => (mask & 0b000001000000) != 0,
+        AddressingMode::AddrIdx(_)      => (mask & 0b000000100000) != 0,
+        AddressingMode::AbsWord         => (mask & 0b000000010000) != 0,
+        AddressingMode::AbsLong         => (mask & 0b000000001000) != 0,
+        AddressingMode::Imm             => (mask & 0b000000000100) != 0,
+        AddressingMode::PCDisplace      => (mask & 0b000000000010) != 0,
+        AddressingMode::PCIdx           => (mask & 0b000000000001) != 0,
+        AddressingMode::Invalid         => false,
+    };
+
+    if valid {
+        inst
+    } else {
+        Instruction::Undefined { op }
+    }
+}
+
+
 pub(crate) fn decode_opcode(op: u16) -> Instruction {
     use Instruction::*;
 
@@ -76,7 +119,7 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
                 if s == 0b11 {
                     if inst_type == 0b100 {
                         // bset
-                        BSET { op } 
+                        valid(op, MASK_DATA_ALTERABLE, BSET { op })
                     } else {
                         Undefined { op }
                     }
@@ -91,7 +134,7 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
                                 Undefined { op }
                             }
                         } else {
-                            ORI  { op }
+                            valid(op, MASK_DATA_ALTERABLE, ORI  { op })
                         },
                         0b001 => if m == 0b111 && xn == 0b100 {
                             if s == 0b00 {
@@ -102,7 +145,7 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
                                 Undefined { op }
                             }
                         } else {
-                            ANDI { op }
+                            valid(op, MASK_DATA_ALTERABLE, ANDI { op })
                         },
                         0b101 => if m == 0b111 && xn == 0b100 {
                             if s == 0b00 {
@@ -113,17 +156,18 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
                                 Undefined { op }
                             }
                         } else {
-                            EORI { op }
+                            valid(op, MASK_DATA_ALTERABLE, EORI { op })
                         },
-                        0b010 => SUBI { op },
-                        0b011 => ADDI { op },
-                        0b110 => CMPI { op },
+                        0b010 => valid(op, MASK_DATA_ALTERABLE, SUBI { op }),
+                        0b011 => valid(op, MASK_DATA_ALTERABLE, ADDI { op }),
+                        // TODO: CMPI allows pc relative on mc680x0 for x >= 2
+                        0b110 => valid(op, MASK_DATA_ALTERABLE, CMPI { op }),
                         0b100 => {
                             match s {
-                                0b00 => BTST { op },
-                                0b01 => BCHG { op },
-                                0b10 => BCLR { op },
-                                0b11 => BSET { op },
+                                0b00 => valid(op, MASK_DATA_ALTERABLE, BTST { op }),
+                                0b01 => valid(op, MASK_DATA_ALTERABLE, BCHG { op }),
+                                0b10 => valid(op, MASK_DATA_ALTERABLE, BCLR { op }),
+                                0b11 => valid(op, MASK_DATA_ALTERABLE, BSET { op }),
                                 _ => unreachable!(),
                             }
                         },
@@ -142,10 +186,10 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
                 } else {
                     // btst, bchg, bclr, bset
                     match s {
-                        0b00 => BTST { op },
-                        0b01 => BCHG { op },
-                        0b10 => BCLR { op },
-                        0b11 => BSET { op },
+                        0b00 => valid(op, MASK_DATA_ALTERABLE, BTST { op }),
+                        0b01 => valid(op, MASK_DATA_ALTERABLE, BCHG { op }),
+                        0b10 => valid(op, MASK_DATA_ALTERABLE, BCLR { op }),
+                        0b11 => valid(op, MASK_DATA_ALTERABLE, BSET { op }),
                         _ => unreachable!(),
                     }
                 }
@@ -164,7 +208,10 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
                 }
             } else {
                 // move
-                MOVE { op }
+                let m = get_op_m_hi(op);
+                let xn = get_op_xn_hi(op);
+                let am = AddressingMode::decode(m, xn);
+                validate_am(op, am, MASK_DATA_ALTERABLE, MOVE { op })
             }
         }
         0b0100 => {
@@ -173,13 +220,13 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
         0b0101 => {
             if s != 0b11 {
                 if m_hi & 0b100 == 0 {
-                    ADDQ { op }
+                    valid(op, MASK_ALTERABLE, ADDQ { op })
                 } else {
-                    SUBQ { op }
+                    valid(op, MASK_ALTERABLE, SUBQ { op })
                 }
             } else {
                 if m != 0b001 {
-                    Scc { op }
+                    valid(op, MASK_DATA_ALTERABLE, Scc { op })
                 } else {
                     DBcc { op }
                 }
@@ -207,10 +254,14 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
                 SBCD { op }
             } else {
                 match m_hi {
-                    0b011 => DIVU { op },
-                    0b111 => DIVS { op },
+                    0b011 => valid(op, MASK_DATA, DIVU { op }),
+                    0b111 => valid(op, MASK_DATA, DIVS { op }),
                     _ => {
-                        OR { op }
+                        if m_hi & 0b100 == 0 {
+                            valid(op, MASK_DATA, OR { op })
+                        } else {
+                            valid(op, MASK_MEM_ALTERABLE, OR { op })
+                        }
                     }
                 }
             }
@@ -221,7 +272,11 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
             } else if d && m & 0b110 == 0b000 {
                 SUBX { op }
             } else {
-                SUB { op }
+                if m_hi & 0b100 == 0 {
+                    SUB { op }
+                } else {
+                    valid(op, MASK_MEM_ALTERABLE, SUB { op })
+                }
             }
         },
         0b1011 => {
@@ -234,20 +289,19 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
             } else {
                 if m_hi & 0b100 != 0 {
                     // eor only has <ea> ^ dn -> <ea>
-                    EOR { op }
+                    valid(op, MASK_DATA_ALTERABLE, EOR { op })
                 } else {
                     Undefined { op }
                 }
-
             }
         },
         0b1100 => {
             if (op & 0x1f0) >> 4 == 0b10000 {
                 ABCD { op }
             } else if !d && s == 0b11 {
-                MULU { op }
+                valid(op, MASK_DATA, MULU { op })
             } else if d && s == 0b11 {
-                MULS { op }
+                valid(op, MASK_DATA, MULS { op })
             } else if d
                    && m & 0b110 == 0b000
                    && 0b00 < s
@@ -258,7 +312,11 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
                     Undefined { op }
                 }
             } else {
-                AND { op }
+                if m_hi & 0b100 == 0 {
+                    valid(op, MASK_DATA, AND { op })
+                } else {
+                    valid(op, MASK_MEM_ALTERABLE, AND { op })
+                }
             }
         },
         0b1101 => {
@@ -267,16 +325,20 @@ pub(crate) fn decode_opcode(op: u16) -> Instruction {
             } else if d && m & 0b110 == 0b000 {
                 ADDX { op }
             } else {
-                ADD { op }
+                if m_hi & 0b100 == 0 {
+                    ADD { op }
+                } else {
+                    valid(op, MASK_MEM_ALTERABLE, ADD { op })
+                }
             }
         },
         0b1110 => {
             if s == 0b11 {
                 match xn_hi {
-                    0b00 => ASdM  { op },
-                    0b01 => LSdM  { op },
-                    0b10 => ROXdM { op },
-                    0b11 => ROdM  { op },
+                    0b00 => valid(op, MASK_MEM_ALTERABLE, ASdM  { op }),
+                    0b01 => valid(op, MASK_MEM_ALTERABLE, LSdM  { op }),
+                    0b10 => valid(op, MASK_MEM_ALTERABLE, ROXdM { op }),
+                    0b11 => valid(op, MASK_MEM_ALTERABLE, ROdM  { op }),
                     _ => unreachable!()
                 }
             } else {
@@ -300,16 +362,16 @@ fn decode_opcode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u
     if m_hi & 0b110 == 0b110 {
         // lea, chk
         if m_hi & 0b001 == 1 {
-            return LEA { op }
+            return valid(op, MASK_CONTROL, LEA { op })
         } else {
             // s is always 0b11 (.w) on mc68000
-            return CHK { op }
+            return valid(op, MASK_DATA, CHK { op })
         }
     } else if m_hi & 0b110 == 0b100 {
         // TODO: revision checking in decode fn
 
         // MC680x0, for x=2|3|4 only
-        // CHK { op }
+        // return valid(op, MASK_DATA, CHK { op })
         return Undefined { op }
     }
 
@@ -322,19 +384,19 @@ fn decode_opcode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u
             // move [from|to] [sr|ccr]
 
             match nibble {
-                0b000 => MOVEFromSR { op },
-                0b100 => MOVEToCCR  { op },
-                0b110 => MOVEToSR   { op },
+                0b000 => valid(op, MASK_DATA_ALTERABLE, MOVEFromSR { op }),
+                0b100 => valid(op, MASK_DATA, MOVEToCCR  { op }),
+                0b110 => valid(op, MASK_DATA, MOVEToSR   { op }),
                 _ => Undefined { op }
             }
         } else {
             // negx, clr, neg, not
 
             match nibble {
-                0b000 => NEGX { op },
-                0b010 => CLR  { op },
-                0b100 => NEG  { op },
-                0b110 => NOT  { op },
+                0b000 => valid(op, MASK_DATA_ALTERABLE, NEGX { op }),
+                0b010 => valid(op, MASK_DATA_ALTERABLE, CLR  { op }),
+                0b100 => valid(op, MASK_DATA_ALTERABLE, NEG  { op }),
+                0b110 => valid(op, MASK_DATA_ALTERABLE, NOT  { op }),
                 _ => Undefined { op }
             }
         }
@@ -346,15 +408,16 @@ fn decode_opcode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u
                     if m == 0b000 {
                         EXT { op }
                     } else {
-                        MOVEM { op }
+                        // reg -> mem
+                        valid(op, MASK_CONTROL_ALT | MASK_BIT_PREDEC, MOVEM { op })
                     }
                 } else if m_hi == 0b000 {
-                    NBCD { op }
+                    valid(op, MASK_DATA_ALTERABLE, NBCD { op })
                 } else if m_hi == 0b001 {
                     if m == 0b000 {
                         SWAP { op }
                     } else {
-                        PEA { op }
+                        valid(op, MASK_CONTROL, PEA { op })
                     }
                 } else if m_hi == 0b111 {
                     // TODO: EXTB
@@ -370,10 +433,11 @@ fn decode_opcode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u
                     if m == 0b111 && xn == 0b100 {
                         ILLEGAL
                     } else {
-                        TAS { op }
+                        valid(op, MASK_DATA_ALTERABLE, TAS { op })
                     }
                 } else {
-                    TST { op }
+                    // TODO: MC680x0 for x >= 2 and CPU32 allow all* addressing modes
+                    valid(op, MASK_ALTERABLE, TST { op })
                 }
             },
             0b111 => {
@@ -420,15 +484,15 @@ fn decode_opcode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u
                     // 0100111XXxxxxxxx
                     // jsr, jmp
                     if m_hi & 0b001 == 0 {
-                        JSR { op }
+                        valid(op, MASK_CONTROL, JSR { op })
                     } else {
-                        JMP { op }
+                        valid(op, MASK_CONTROL, JMP { op })
                     }
                 }
             },
             0b110 => {
-                // movem (d == 1)
-                MOVEM { op }
+                // movem (mem -> reg)
+                valid(op, MASK_CONTROL | MASK_BIT_POSTINC, MOVEM { op })
             }
             _ => Undefined { op }
         }
