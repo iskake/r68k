@@ -64,16 +64,8 @@ impl StatusRegister {
         self.val |= 0b00100000_00000000
     }
 
-    pub fn clear_supervisor(&mut self) {
-        self.val &= 0b11011111_11111111
-    }
-
     pub fn sr(&self) -> u16 {
         self.val
-    }
-
-    pub fn sr_hi(&self) -> u8 {
-        ((self.val & 0xff00) >> 8) as u8
     }
 
     pub fn ccr(&self) -> u8 {

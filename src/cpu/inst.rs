@@ -1917,9 +1917,10 @@ fn trap_vec(vector_num: u8, cpu: &mut CPU) {
         // format code to the system stack"
         // Format + Offset word -> (SSP) 
         // SSP - 2 -> SSP
-        let format_offset = todo!("Format/offset -> (SSP)");
+        let format_offset = 0x0000_0000;
         cpu.push_sp_short(format_offset);  // +4(0/1) => 4(0/1)
         cpu.cycle(2);   // ?
+        todo!("Format/offset -> (SSP)")
     }
 
     // PC -> (SSP)
@@ -1952,9 +1953,9 @@ fn trap(op: u16, cpu: &mut CPU) {
     trap_vec(v + 32, cpu);
 }
 
-fn trap_illegal(op: u16, cpu: &mut CPU) {
+fn trap_illegal(_op: u16, cpu: &mut CPU) {
     #[cfg(feature = "std")]
-    println!("illegal instruction (0b{op:016b}; 0x{op:04x})");
+    println!("illegal instruction (0b{_op:016b}; 0x{_op:04x})");
 
     trap_vec(CPUVector::IllegalInstruction as u8, cpu);
 }
