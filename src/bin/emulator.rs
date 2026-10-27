@@ -1,10 +1,11 @@
 use std::{env::args, path::PathBuf};
 
 use elf::{ElfBytes, endian::AnyEndian};
-use r68k::cpu::*;
+use r68k::{cpu::*, mmu::{SimpleMMU, MMU}};
 
 fn main() {
-    let mut cpu = CPU::new(CPURevision::MC68000);
+    let mut mmu = SimpleMMU::new(0x10000000);
+    let mut cpu = CPU::new(CPURevision::MC68000, &mut mmu);
 
     let args: Vec<String> = args().collect();
 

@@ -82,10 +82,10 @@ impl CPURevision {
     }
 }
 
-pub struct CPU {
+pub struct CPU<'a> {
     reg: Registers,
 
-    mmu: MMU,
+    mmu: &'a mut dyn MMU,
 
     data_bus: u32,
     addr_bus: u32,
@@ -270,8 +270,8 @@ macro_rules! define_modify_am_op {
     };
 }
 
-impl CPU {
-    pub fn new(rev: CPURevision) -> CPU {
+impl<'a> CPU<'a> {
+    pub fn new(rev: CPURevision, mmu: &'a mut dyn MMU) -> CPU<'a> {
         let (data_bus_mask, addr_bus_mask) = match rev {
             CPURevision::MC68000 => { (0x0000_ffff, 0x00ff_ffff) },
             CPURevision::MC68010 => { (0x0000_ffff, 0x00ff_ffff) },
@@ -286,7 +286,7 @@ impl CPU {
 
         CPU {
             reg: Registers::new(),
-            mmu: MMU::new(0x1000000),
+            mmu,
 
             data_bus: 0,
             addr_bus: 0,
@@ -351,7 +351,7 @@ impl CPU {
         let sp = if self.reg.sr.supervisor_state() { self.reg.usp } else { self.reg.ssp };
         println!(
             "  sr: {:08b}_{:08b}                                                                           ({}: {:08x})",
-            self.reg.sr.sr_hi(),
+            self.reg.sr.sr() >> 8,
             self.reg.sr.ccr(),
             if self.reg.sr.supervisor_state() { "usp" } else { "ssp" },
             sp,
