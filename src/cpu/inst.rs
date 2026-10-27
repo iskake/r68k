@@ -197,7 +197,7 @@ impl AddressingMode {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Instruction {
     // 0000
     ORIToCCR,
@@ -2066,12 +2066,12 @@ fn rte(cpu: &mut CPU) {
         // (SP) -> SR;
         // SP + 2 -> PC;
         let val = cpu.pop_sp_word();   // +4(1/0)
-        cpu.reg.sr.modify_sr(val, cpu.revision);
 
         // (SP) -> PC;
         // SP + 4 -> SP;
         let old_state = cpu.pop_sp_long();  // +8(2/0)
         cpu.reg.pc = old_state;
+        cpu.reg.sr.modify_sr(val, cpu.revision);
 
         if cpu.revision != CPURevision::MC68000 {
             // Restore state and deallocate stack according to (SP)
