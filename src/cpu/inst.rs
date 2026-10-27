@@ -1892,6 +1892,8 @@ fn pea(op: u16, cpu: &mut CPU) {
 
 /// Cycles: 30(3/3) (MC68000)
 fn trap_vec(vector_num: u8, cpu: &mut CPU) {
+    let prev_sr = cpu.reg.sr.sr();
+
     cpu.reg.sr.set_supervisor();
 
     // ?
@@ -1915,7 +1917,7 @@ fn trap_vec(vector_num: u8, cpu: &mut CPU) {
 
     // SR -> (SSP)
     // SSP - 2 -> SSP
-    cpu.push_sp_short(cpu.reg.sr.sr());  // +4(0/1) => ??(1/3)
+    cpu.push_sp_short(prev_sr);          // +4(0/1) => ??(1/3)
     cpu.cycle(2);   // ?
 
     // (Vector) -> PC
@@ -2126,7 +2128,7 @@ fn rte(cpu: &mut CPU) {
     // - RTS: 16(4/0)
     // - RTR: 20(5/0)
     // - RTE: 20(5/0)
-    cpu.read_mem_short(0x0000_0000);    // +4(1/0) (dummy read)
+    cpu.read_pc_short();                     // +4(1/0) (dummy read)
 
     if cpu.reg.sr.supervisor_state() {
         // (SP) -> SR;
@@ -2150,7 +2152,7 @@ fn rte(cpu: &mut CPU) {
 
 fn rts(cpu: &mut CPU) {
     // Like rte and rtr, this incsruction has an extra read cycle
-    cpu.read_mem_short(0x0000_0000);    // +4(1/0) (dummy read)
+    cpu.read_pc_short();                     // +4(1/0) (dummy read)
 
     // (SP) -> PC;
     // SP + 4 -> SP
@@ -2159,7 +2161,7 @@ fn rts(cpu: &mut CPU) {
 
 fn rtr(cpu: &mut CPU) {
     // Like rts and rte, this incsruction has an extra read cycle
-    cpu.read_mem_short(0x0000_0000);    // +4(1/0) (dummy read)
+    cpu.read_pc_short();                     // +4(1/0) (dummy read)
 
     // (SP) -> CCR;
     // SP + 2 -> SP
