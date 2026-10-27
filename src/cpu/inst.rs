@@ -505,10 +505,10 @@ impl Display for Instruction {
                 let an = get_op_xn_hi(*op);
                 write!(f, "suba{} {},a{}", s, am, an)
             },
-            DIVU  { op } => write!(f, "divu {},d{}", AddressingMode::decode_op(*op), get_op_xn_hi(*op)),
-            DIVS  { op } => write!(f, "divs {},d{}", AddressingMode::decode_op(*op), get_op_xn_hi(*op)),
-            MULU  { op } => write!(f, "mulu {},d{}", AddressingMode::decode_op(*op), get_op_xn_hi(*op)),
-            MULS  { op } => write!(f, "muls {},d{}", AddressingMode::decode_op(*op), get_op_xn_hi(*op)),
+            DIVU  { op } => write!(f, "divu.w {},d{}", AddressingMode::decode_op(*op), get_op_xn_hi(*op)),
+            DIVS  { op } => write!(f, "divs.w {},d{}", AddressingMode::decode_op(*op), get_op_xn_hi(*op)),
+            MULU  { op } => write!(f, "mulu.w {},d{}", AddressingMode::decode_op(*op), get_op_xn_hi(*op)),
+            MULS  { op } => write!(f, "muls.w {},d{}", AddressingMode::decode_op(*op), get_op_xn_hi(*op)),
             // exceptions, etc.
             TRAP  { op } => write!(f, "trap #{}", op & 0xf),
             TRAPV              => write!(f, "trapv"),
@@ -1293,7 +1293,76 @@ define_opq!(subq, modify_am_sub, set_sr_flags_sub);
 define_opx!(subx, modify_am_sub, set_sr_flags_sub);
 
 fn div(op: u16, cpu: &mut CPU) {
-    todo!("div")
+    // TODO: the other mc680x0 (x = 2,3,4 or CPU32) div instructions
+
+    let dn = get_op_xn_hi(op).into();
+    let am = AddressingMode::decode_op(op);
+    assert_valid_am(am, 0b1011111_11111);
+
+    let src = cpu.read_am(DataSize::Word, am);
+    let dst = cpu.reg.read_data(dn);
+
+    let unsigned = op & 0b100_000_000 == 0;
+
+    // A divide by zero exception supposedly takes 42(5/3) cycles (ignoring am..?), so we need 8 cycles before checking.
+    cpu.cycle(8);   // +8(0/0)
+
+    // "Always cleared", so even when div by 0..?
+    cpu.reg.sr.clear_c();
+
+    if src == 0 {
+        return trap_vec(CPUVector::IntDivByZero as u8, cpu);
+    }
+
+    let (rem, quot) = if unsigned {
+        // divu
+        let d = dst as u32;
+        let s = src as u32;
+
+        let quot = d / s;
+        let rem  = d % s;
+
+        (rem as u32, quot as u32)
+    } else {
+        // divs
+        // TODO: this always assumes the worst-case scenario. Check what the actual cycle count should be.
+        // "The divide algorithm used by the MC68000 provides less than 10% difference between
+        // the best and the worst case timings."
+        cpu.cycle(18);  // +18(0/0)
+
+        let d = dst as i32;
+        let s = src as i16 as i32;
+
+        let quot = d / s;
+        let rem  = d % s;
+
+        (rem as u32, quot as u32)
+    };
+
+    let v = if unsigned {
+        quot > 0xffff
+    } else {
+        (quot as i32 > i16::MAX as i32) || ((quot as i32) < i16::MIN as i32)
+    };
+
+    if v {
+        // "If the instruction detects an overflow, it sets the overflow condition code,
+        // and the operands are unaffected."
+        // TODO: check if the cycle counts when overflow are correct.
+        cpu.reg.sr.set_v();
+    } else {
+        cpu.cycle(126);
+
+        let res = ((rem & 0xffff) << 16) | (quot & 0xffff);
+
+        cpu.reg.write_data(dn, DataSize::Long, res);
+
+        cpu.reg.sr.modify_n(quot & DataSize::Word.sign_bit() != 0);
+        cpu.reg.sr.modify_z(quot == 0);
+    }
+
+    // ?
+    cpu.cycle(2);
 }
 
 fn mul(op: u16, cpu: &mut CPU) {
@@ -1331,12 +1400,12 @@ fn mul(op: u16, cpu: &mut CPU) {
     };
     cpu.cycle(32 + 2 * (n as usize));
 
-    let res = if op & 0b100_000_000 != 0 {
-        // muls
-        (src as i16 as i32 * dst as i16 as i32) as u32
-    } else {
+    let res = if unsigned {
         // mulu
         src * dst
+    } else {
+        // muls
+        (src as i16 as i32 * dst as i16 as i32) as u32
     };
 
     cpu.reg.write_data(dn, DataSize::Long, res);
