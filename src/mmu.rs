@@ -1,5 +1,8 @@
+extern crate alloc;
+use alloc::vec;
+
 pub struct MMU {
-    memory: Vec<u8>,
+    memory: alloc::vec::Vec<u8>,
 }
 
 impl MMU {

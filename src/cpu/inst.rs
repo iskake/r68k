@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 use crate::{bits::{DataSize, SignExtend, is_negative, is_zero, sign_extend_size}, cpu::{CPU, CPU_VECTOR_SIZE, CPURevision::{self, MC68000, MC68010}, CPUVector, RegisterNum, opcode::*}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +78,7 @@ impl From<u16> for Condition {
     }
 }
 
+#[cfg(feature = "std")]
 impl std::fmt::Display for Condition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -139,7 +138,8 @@ pub enum AddressingMode {
     Invalid,
 }
 
-impl Display for AddressingMode {
+#[cfg(feature = "std")]
+impl std::fmt::Display for AddressingMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AddressingMode::DataReg(r)      => write!(f, "d{}", Into::<u8>::into(*r)),
@@ -301,6 +301,7 @@ pub enum Instruction {
     Undefined { op: u16 },
 }
 
+#[cfg(feature = "std")]
 macro_rules! display_a_op_b {
     ($f:expr, $inst:expr, $op:expr) => {
         {
@@ -319,6 +320,7 @@ macro_rules! display_a_op_b {
     };
 }
 
+#[cfg(feature = "std")]
 macro_rules! display_bop {
     ($f:expr, $inst:expr, $op:expr) => {
         {
@@ -341,6 +343,7 @@ macro_rules! display_bop {
     };
 }
 
+#[cfg(feature = "std")]
 macro_rules! display_shift_m {
     ($f:expr, $inst:expr, $op:expr) => {
         {
@@ -352,6 +355,7 @@ macro_rules! display_shift_m {
     };
 }
 
+#[cfg(feature = "std")]
 macro_rules! display_shift_d {
     ($f:expr, $inst:expr, $op:expr) => {
         {
@@ -376,7 +380,8 @@ macro_rules! display_shift_d {
     };
 }
 
-impl Display for Instruction {
+#[cfg(feature = "std")]
+impl std::fmt::Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use Instruction::*;
         match self {
@@ -820,7 +825,14 @@ fn assert_valid_am(am: AddressingMode, mask: u32) {
         AddressingMode::Invalid         => false,
     };
 
-    assert!(valid, "Invalid addressing mode {am}");
+    cfg_select! {
+        feature = "std" => {
+            assert!(valid, "Invalid addressing mode: `{am}` (mask: {mask:012b})");
+        }
+        _ => {
+            assert!(valid, "Invalid addressing mode (mask: {mask:012b})")
+        }
+    }
 }
 
 fn move_(op: u16, cpu: &mut CPU) {
@@ -882,7 +894,7 @@ fn movem(op: u16, cpu: &mut CPU) {
         AddressingMode::DataReg(_)
         | AddressingMode::AddrReg(_)
         | AddressingMode::Imm
-        | AddressingMode::Invalid => panic!("Invalid addressing mode for movem: {am}"),
+        | AddressingMode::Invalid => assert_valid_am(am, 0),
         _ => {}
     }
 
@@ -941,7 +953,7 @@ fn movep(op: u16, cpu: &mut CPU) {
     // TODO: check if this is correct
     if direction {
         // reg -> mem
-        println!("MOVEP REG -> MEM");
+        // println!("MOVEP REG -> MEM");
         let val = cpu.reg.read_data(dn);
 
         let a_r = cpu.reg.read_address(an);
@@ -963,7 +975,7 @@ fn movep(op: u16, cpu: &mut CPU) {
         }
     } else {
         // mem -> reg
-        println!("MOVEP MEM -> REG");
+        // println!("MOVEP MEM -> REG");
         let a_r = cpu.reg.read_address(an);
         let addr = a_r + displacement as u32;
 
@@ -1941,7 +1953,9 @@ fn trap(op: u16, cpu: &mut CPU) {
 }
 
 fn trap_illegal(op: u16, cpu: &mut CPU) {
+    #[cfg(feature = "std")]
     println!("illegal instruction (0b{op:016b}; 0x{op:04x})");
+
     trap_vec(CPUVector::IllegalInstruction as u8, cpu);
 }
 

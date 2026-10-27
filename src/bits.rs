@@ -26,6 +26,7 @@ pub enum DataSize {
     Long,
 }
 
+#[cfg(feature = "std")]
 impl std::fmt::Display for DataSize {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

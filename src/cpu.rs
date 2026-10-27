@@ -310,6 +310,7 @@ impl CPU {
         self.reg.pc = self.read_mem_long(CPUVector::ResetPC as u32 * CPU_VECTOR_SIZE);
     }
 
+    #[cfg(feature = "std")]
     pub fn print_state(&self) {
         println!("CPU STATE ({:?})", self.revision);
         println!(
@@ -906,31 +907,46 @@ impl CPU {
     fn fetch_and_run(&mut self) {
         let op = self.read_pc_inc_short();
         let inst = opcode::decode_opcode(op);
-        print!("{op:04x}    {:<22}", format!("{inst}"));
+
+        #[cfg(feature = "std")]
+        println!("{op:04x}    {:<22}", format!("{inst}"));
+
         inst.run(self);
     }
 
     pub fn run(&mut self) -> bool {
         if self.stopped {
+            #[cfg(feature = "std")]
             println!("Stopping execution.");
+
             return false;
         }
 
-        let pre_cycles = self.cycles;
-        let pre_cycles_read = self.read_cycles;
-        let pre_cycles_write= self.write_cycles;
-        self.fetch_and_run();
-        let post_cycles = self.cycles;
-        let post_cycles_read = self.read_cycles;
-        let post_cycles_write= self.write_cycles;
-        // println!();
-        println!(
-            "{}({}/{})",
-            post_cycles - pre_cycles,
-            post_cycles_read - pre_cycles_read,
-            post_cycles_write - pre_cycles_write
-        );
-        self.print_state();
+        cfg_select! {
+            feature = "std" => {
+                let pre_cycles = self.cycles;
+                let pre_cycles_read = self.read_cycles;
+                let pre_cycles_write= self.write_cycles;
+
+                self.fetch_and_run();
+
+                let post_cycles = self.cycles;
+                let post_cycles_read = self.read_cycles;
+                let post_cycles_write= self.write_cycles;
+
+                // println!();
+                println!(
+                    "{}({}/{})",
+                    post_cycles - pre_cycles,
+                    post_cycles_read - pre_cycles_read,
+                    post_cycles_write - pre_cycles_write
+                );
+                self.print_state();
+            }
+            _ => {
+                self.fetch_and_run();
+            }
+        }
 
         true
     }
