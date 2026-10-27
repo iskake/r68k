@@ -1,27 +1,78 @@
 use std::{env::args, path::PathBuf};
 
 use elf::{ElfBytes, endian::AnyEndian};
-use r68k::{cpu::*, mmu::{SimpleMMU, MMU}};
+use r68k::{cpu::*, mmu::{MMU}};
 
-fn main() {
-    let mut mmu = SimpleMMU::new(0x10000000);
-    let mut cpu = CPU::new(CPURevision::MC68000, &mut mmu);
+pub struct SimpleMMU {
+    memory: Vec<u8>,
+}
 
-    let args: Vec<String> = args().collect();
+impl SimpleMMU {
+    pub fn new(size: usize) -> SimpleMMU {
+        assert!(size.count_ones() == 1, "Memory size must be a multiple of 2");
 
-    if args.len() < 2 {
-        println!("need an elf32-m68k object file to load")
+        SimpleMMU {
+            memory: vec![0; size],
+        }
+    }
+}
+
+impl MMU for SimpleMMU {
+    fn read_byte_immutable(&self, addr: u32) -> u8 {
+        self.memory[addr as usize & (self.memory.len() - 1)]
     }
 
-    tmp_load_program(&args[1], &mut cpu);
+    fn read_word_immutable(&self, addr: u32) -> u16 {
+        let hi = self.read_byte_immutable(addr) as u16;
+        let lo = self.read_byte_immutable(addr + 1) as u16;
 
-    println!("created cpu");
-    cpu.init();
-    cpu.print_state();
-    loop {
-        if !cpu.run() {
-            break;
-        }
+        (hi << 8) | lo
+    }
+
+    fn read_long_immutable(&self, addr: u32) -> u32 {
+        let hi = self.read_word_immutable(addr) as u32;
+        let lo = self.read_word_immutable(addr + 2) as u32;
+
+        (hi << 16) | lo
+    }
+
+    fn read_byte(&mut self, addr: u32) -> u8 {
+        self.memory[addr as usize & (self.memory.len() - 1)]
+    }
+
+    fn read_word(&mut self, addr: u32) -> u16 {
+        let hi = self.read_byte(addr) as u16;
+        let lo = self.read_byte(addr + 1) as u16;
+
+        (hi << 8) | lo
+    }
+
+    fn read_long(&mut self, addr: u32) -> u32 {
+        let hi = self.read_word(addr) as u32;
+        let lo = self.read_word(addr + 2) as u32;
+
+        (hi << 16) | lo
+    }
+
+    fn write_byte(&mut self, addr: u32, val: u8) {
+        let addr = addr as usize & (self.memory.len() - 1);
+        self.memory[addr] = val;
+    }
+
+    fn write_word(&mut self, addr: u32, val: u16) {
+        let hi = ((val & 0xff00) >> 8) as u8;
+        let lo = (val & 0x00ff) as u8;
+
+        self.write_byte(addr, hi);
+        self.write_byte(addr + 1, lo);
+    }
+
+    fn write_long(&mut self, addr: u32, val: u32) {
+        let hi = ((val & 0xffff0000) >> 16) as u16;
+        let lo = (val & 0x0000ffff) as u16;
+
+        self.write_word(addr, hi);
+        self.write_word(addr + 2, lo);
     }
 }
 
@@ -54,4 +105,26 @@ fn write_section_if_exists(cpu: &mut CPU, file: &ElfBytes<'_, AnyEndian>, sectio
         cpu.write_mem_byte_internal(addr as u32 + i as u32, *b);
     }
     println!("Wrote section '{}' to address 0x{:08x}", section_name, addr);
+}
+
+fn main() {
+    let mut mmu = SimpleMMU::new(0x10000000);
+    let mut cpu = CPU::new(CPURevision::MC68000, &mut mmu);
+
+    let args: Vec<String> = args().collect();
+
+    if args.len() < 2 {
+        println!("need an elf32-m68k object file to load")
+    }
+
+    tmp_load_program(&args[1], &mut cpu);
+
+    println!("created cpu");
+    cpu.init();
+    cpu.print_state();
+    loop {
+        if !cpu.run() {
+            break;
+        }
+    }
 }
