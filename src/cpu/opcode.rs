@@ -1,14 +1,24 @@
 use crate::{bits::DataSize, cpu::inst::{AddressingMode, Instruction}};
 
-const MASK_ALTERABLE: u32      = 0b1111111_11000;
-const MASK_MEM_ALTERABLE: u32  = 0b0011111_11000;
-const MASK_DATA_ALTERABLE: u32 = 0b1011111_11000;
-const MASK_DATA: u32           = 0b1011111_11111;
-const MASK_CONTROL: u32        = 0b0010011_11011;
-const MASK_CONTROL_ALT: u32    = 0b0010011_11000;
+const MASK_BIT_DATA_REG: u32    = 0b1000000_00000;
+const MASK_BIT_ADDR_REG: u32    = 0b0100000_00000;
+const MASK_BIT_ADDR: u32        = 0b0010000_00000;
+const MASK_BIT_POSTINC: u32     = 0b0001000_00000;
+const MASK_BIT_PREDEC: u32      = 0b0000100_00000;
+const MASK_BIT_DISPLACE: u32    = 0b0000010_00000;
+const MASK_BIT_IDX: u32         = 0b0000001_00000;
+const MASK_BIT_ABS_WORD: u32    = 0b0000000_10000;
+const MASK_BIT_ABS_LONG: u32    = 0b0000000_01000;
+const MASK_BIT_IMM: u32         = 0b0000000_00100;
+const MASK_BIT_PC_DISPLACE: u32 = 0b0000000_00010;
+const MASK_BIT_PC_IDX: u32      = 0b0000000_00001;
 
-const MASK_BIT_POSTINC: u32    = 0b0001000_00000;
-const MASK_BIT_PREDEC: u32     = 0b0000100_00000;
+const MASK_ALTERABLE: u32       = 0b1111111_11000;
+const MASK_MEM_ALTERABLE: u32   = 0b0011111_11000;
+const MASK_DATA_ALTERABLE: u32  = 0b1011111_11000;
+const MASK_DATA: u32            = 0b1011111_11111;
+const MASK_CONTROL: u32         = 0b0010011_11011;
+const MASK_CONTROL_ALT: u32     = 0b0010011_11000;
 
 pub(crate) fn get_op_xn_hi(op: u16) -> u8 {
     ((op & 0b111_000_000_000) >> 9) as u8
@@ -70,18 +80,18 @@ fn valid(op: u16, mask: u32, inst: Instruction) -> Instruction {
 
 fn validate_am(op: u16, am: AddressingMode, mask: u32, inst: Instruction) -> Instruction {
     let valid = match am {
-        AddressingMode::DataReg(_)      => (mask & 0b100000000000) != 0,
-        AddressingMode::AddrReg(_)      => (mask & 0b010000000000) != 0,
-        AddressingMode::Addr(_)         => (mask & 0b001000000000) != 0,
-        AddressingMode::AddrPostInc(_)  => (mask & 0b000100000000) != 0,
-        AddressingMode::AddrPreDec(_)   => (mask & 0b000010000000) != 0,
-        AddressingMode::AddrDisplace(_) => (mask & 0b000001000000) != 0,
-        AddressingMode::AddrIdx(_)      => (mask & 0b000000100000) != 0,
-        AddressingMode::AbsWord         => (mask & 0b000000010000) != 0,
-        AddressingMode::AbsLong         => (mask & 0b000000001000) != 0,
-        AddressingMode::Imm             => (mask & 0b000000000100) != 0,
-        AddressingMode::PCDisplace      => (mask & 0b000000000010) != 0,
-        AddressingMode::PCIdx           => (mask & 0b000000000001) != 0,
+        AddressingMode::DataReg(_)      => (mask & MASK_BIT_DATA_REG)    != 0,
+        AddressingMode::AddrReg(_)      => (mask & MASK_BIT_ADDR_REG)    != 0,
+        AddressingMode::Addr(_)         => (mask & MASK_BIT_ADDR)        != 0,
+        AddressingMode::AddrPostInc(_)  => (mask & MASK_BIT_POSTINC)     != 0,
+        AddressingMode::AddrPreDec(_)   => (mask & MASK_BIT_PREDEC)      != 0,
+        AddressingMode::AddrDisplace(_) => (mask & MASK_BIT_DISPLACE)    != 0,
+        AddressingMode::AddrIdx(_)      => (mask & MASK_BIT_IDX)         != 0,
+        AddressingMode::AbsWord         => (mask & MASK_BIT_ABS_WORD)    != 0,
+        AddressingMode::AbsLong         => (mask & MASK_BIT_ABS_LONG)    != 0,
+        AddressingMode::Imm             => (mask & MASK_BIT_IMM)         != 0,
+        AddressingMode::PCDisplace      => (mask & MASK_BIT_PC_DISPLACE) != 0,
+        AddressingMode::PCIdx           => (mask & MASK_BIT_PC_IDX)      != 0,
         AddressingMode::Invalid         => false,
     };
 
