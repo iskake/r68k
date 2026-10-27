@@ -232,7 +232,7 @@ pub enum Instruction {
     NBCD { op: u16 },
     SWAP { op: u16 },
     PEA  { op: u16 },
-    ILLEGAL { op: u16 },
+    ILLEGAL,
     TAS  { op: u16 },
     TST  { op: u16 },
     TRAP { op: u16 },
@@ -512,7 +512,7 @@ impl Display for Instruction {
             // exceptions, etc.
             TRAP  { op } => write!(f, "trap #{}", op & 0xf),
             TRAPV              => write!(f, "trapv"),
-            ILLEGAL {op} => write!(f, "illegal"),
+            ILLEGAL            => write!(f, "illegal"),
             CHK   { op } => {
                 let s = get_op_size_alt(*op, SIZE_SHIFT_CHK);
                 let am = AddressingMode::decode_op(*op);
@@ -723,7 +723,7 @@ impl Instruction {
             // exceptions, etc.
             Instruction::TRAP  { op } => trap(op, cpu),
             Instruction::TRAPV             => trapv(cpu),
-            Instruction::ILLEGAL {op} => trap_illegal(op, cpu),
+            Instruction::ILLEGAL           => trap_illegal(0x4afc, cpu),
             Instruction::CHK   { op } => chk(op, cpu),
             Instruction::RESET             => reset(cpu),
             Instruction::STOP              => stop(cpu),

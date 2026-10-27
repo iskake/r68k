@@ -368,7 +368,7 @@ fn decode_opcode_0100_prefixed(op: u16, m: u8, m_hi: u8, s: u8, xn: u8, xn_hi: u
                 // illegal, tas, tst
                 if s == 0b11 {
                     if m == 0b111 && xn == 0b100 {
-                        ILLEGAL { op }
+                        ILLEGAL
                     } else {
                         TAS { op }
                     }
