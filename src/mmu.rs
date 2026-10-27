@@ -30,7 +30,7 @@ impl MMU {
     }
 
     pub fn read_byte(&mut self, addr: u32) -> u8 {
-        self.memory[addr as usize]
+        self.memory[addr as usize & (self.memory.len() - 1)]
     }
 
     pub fn read_short(&mut self, addr: u32) -> u16 {
@@ -48,7 +48,8 @@ impl MMU {
     }
 
     pub fn write_byte(&mut self, addr: u32, val: u8) {
-        self.memory[addr as usize] = val;
+        let addr = addr as usize & (self.memory.len() - 1);
+        self.memory[addr] = val;
     }
 
     pub fn write_short(&mut self, addr: u32, val: u16) {
