@@ -3,12 +3,20 @@ name = "r68k"
 version = "0.1.0"
 edition = "2024"
 
+[build]
+rustflags = ["-C", "target-cpu=native"]
+
 [profile.dev]
 overflow-checks = false
 
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
 [features]
-default = []
+default = [ "instr_cache" ]
 std = []
+instr_cache = []
 
 [dependencies]
 elf = "0.8.0"

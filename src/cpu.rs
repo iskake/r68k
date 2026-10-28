@@ -101,6 +101,9 @@ pub struct CPU<'a> {
     // Avoids having to match based on revision
     data_bus_mask: u32,
     addr_bus_mask: u32,
+
+    #[cfg(feature="instr_cache")]
+    instr_cache: alloc::boxed::Box<[inst::Instruction]>
 }
 
 macro_rules! op_add { ($a:expr, $b:expr) => { $a + $b }; }
@@ -284,6 +287,15 @@ impl<'a> CPU<'a> {
             todo!("support for CPU revision {rev:?}")
         }
 
+        #[cfg(feature="instr_cache")]
+        let instr_cache = alloc::boxed::Box::new([inst::Instruction::Undefined { op: 0xffff }; 0x10000]);
+
+        // Temp.? Check if this actually makes a meaningful difference on different hardware
+        // #[cfg(feature = "instr_cache")]
+        // for op in 0..u16::MAX {
+        //     self.instr_cache[op as usize] = opcode::decode_opcode(op);
+        // }
+
         CPU {
             reg: Registers::new(),
             mmu,
@@ -301,6 +313,9 @@ impl<'a> CPU<'a> {
             revision: rev,
             data_bus_mask,
             addr_bus_mask,
+
+            #[cfg(feature="instr_cache")]
+            instr_cache
         }
     }
 
@@ -906,7 +921,21 @@ impl<'a> CPU<'a> {
 
     fn fetch_and_run(&mut self) {
         let op = self.read_pc_inc_word();
-        let inst = opcode::decode_opcode(op);
+
+        cfg_select! {
+            feature = "instr_cache" => {
+                let inst = if let inst::Instruction::Undefined { op: 0xffff } = self.instr_cache[op as usize] {
+                    let inst = opcode::decode_opcode(op);
+                    self.instr_cache[op as usize] = inst;
+                    inst
+                } else {
+                    self.instr_cache[op as usize]
+                };
+            }
+            _ => {
+                let inst = opcode::decode_opcode(op);
+            }
+        }
 
         #[cfg(feature = "std")]
         println!("{op:04x}    {:<22}", format!("{inst}"));
@@ -949,6 +978,13 @@ impl<'a> CPU<'a> {
         }
 
         true
+    }
+
+    /// Get the total number of cycles the CPU has performed as a tuple
+    /// on the form:
+    /// `(total, reads, writes)`
+    pub fn cycles(&self) -> (usize, usize, usize) {
+        (self.cycles, self.read_cycles, self.write_cycles)
     }
 
     fn cycle(&mut self, amount: usize) {
